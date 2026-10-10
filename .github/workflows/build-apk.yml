@@ -1,0 +1,50 @@
+name: Build Glass Bridge APK
+
+on:
+  push:
+    paths:
+      - "glass-bridge/**"
+      - ".github/workflows/build-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: glass-bridge
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Build APK
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk GlassBridge.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlassBridge-apk
+          path: glass-bridge/GlassBridge.apk
+
+      - name: Publish to the "glass-bridge-latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: glass-bridge-latest
+          name: Glass Bridge (latest build)
+          target_commitish: ${{ github.sha }}
+          body: "Download GlassBridge.apk below and open it on your phone. Built from ${{ github.sha }}."
+          files: glass-bridge/GlassBridge.apk
+          make_latest: true

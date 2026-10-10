@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Glass Bridge</string>
+    <string name="tile_video">Glasses video</string>
+    <string name="tile_photo">Glasses photo</string>
+    <string name="tile_import">Glasses import</string>
+    <string name="a11y_description">Taps the Video, Take photo and Import buttons in the RDGlass app for you, and reads its pop-up messages so you know whether the glasses actually started recording. It only acts on the RDGlass app.</string>
+</resources>
