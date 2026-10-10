@@ -66,6 +66,8 @@ class GlassService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var rdPackage: String? = null
     private var flow: Flow? = null
+    private val trace = ArrayList<String>()
+    private var flowStartedAt = 0L
     private var queuedImport = false
     private var unlockThen: String? = null
     private var awaitingAck = false
@@ -266,6 +268,9 @@ class GlassService : AccessibilityService() {
             }
             else -> return
         }
+        trace.clear()
+        flowStartedAt = SystemClock.uptimeMillis()
+        trace("Command: ${command.substringAfterLast('.')}, RDGlass package: $rd")
         Flow(steps).also { flow = it }.start()
     }
 
@@ -285,11 +290,14 @@ class GlassService : AccessibilityService() {
 
         private fun next() {
             if (index >= steps.size) {
+                trace("Done")
+                Prefs.setString(this@GlassService, Prefs.SCREEN_REPORT, screenReport())
                 onFlowEnded()
                 return
             }
             handler.postDelayed({
                 stepStartedAt = SystemClock.uptimeMillis()
+                trace("Step: ${steps[index].desc}")
                 attempt()
             }, steps[index].delayMs)
         }
@@ -315,8 +323,8 @@ class GlassService : AccessibilityService() {
 
         private fun fail(step: Step) {
             Log.w(TAG, "Failed to ${step.desc}")
-            Prefs.setString(this@GlassService, Prefs.SCREEN_REPORT,
-                "Failed to ${step.desc}\n\n" + screenReport())
+            trace("FAILED: ${step.desc}")
+            Prefs.setString(this@GlassService, Prefs.SCREEN_REPORT, screenReport())
             if (awaitingAck) {
                 awaitingAck = false
                 Notifier.status(this@GlassService, "⚠️ Glasses didn't respond",
@@ -401,7 +409,15 @@ class GlassService : AccessibilityService() {
      * a couple of seconds to tapping where the button sits on screen ([fx], [fy] as screen fractions).
      */
     private fun press(label: String, fx: Float, fy: Float): Boolean {
+        val rd = rdPackage ?: return false
+        val front = rootInActiveWindow?.packageName?.toString()
+        if (front != rd) {
+            trace("RDGlass not in front (front: $front), reopening it")
+            launch(rd)
+            return false
+        }
         if (click(label)) {
+            trace("Pressed '$label' by its label")
             pressStartedAt.remove(label)
             return true
         }
@@ -410,7 +426,15 @@ class GlassService : AccessibilityService() {
         if (now - started < 2_500) return false
         pressStartedAt.remove(label)
         Log.i(TAG, "'$label' not found, tapping its usual position")
+        trace("'$label' not found by label, tapping its usual position")
         return tapAt(fx, fy)
+    }
+
+    private fun trace(message: String) {
+        val seconds = (SystemClock.uptimeMillis() - flowStartedAt) / 1000.0
+        val line = "+%.1fs  %s".format(seconds, message)
+        Log.i(TAG, line)
+        if (trace.size < 60) trace += line
     }
 
     private fun tapAt(fx: Float, fy: Float): Boolean {
@@ -433,25 +457,29 @@ class GlassService : AccessibilityService() {
 
     /** Lists what RDGlass shows to accessibility, so a failed step can be diagnosed. */
     private fun screenReport(): String {
-        val lines = ArrayList<String>()
-        lines += "Active app: ${rootInActiveWindow?.packageName}"
+        val out = StringBuilder()
+        out.append("Glass Bridge report\n\n")
+        trace.forEach { out.append(it).append('\n') }
+        out.append("\nFront app: ").append(rootInActiveWindow?.packageName).append('\n')
+        out.append("Windows: ").append(windows.joinToString { "${it.root?.packageName}(${it.type})" }).append("\n\n")
         val bounds = Rect()
+        var count = 0
         forEachNode { node ->
             val text = node.text?.toString()?.replace('\n', ' ')
             val desc = node.contentDescription?.toString()?.replace('\n', ' ')
             if (!text.isNullOrBlank() || !desc.isNullOrBlank() || node.isClickable) {
                 node.getBoundsInScreen(bounds)
-                lines += buildString {
-                    append(node.className?.toString()?.substringAfterLast('.') ?: "?")
-                    if (!text.isNullOrBlank()) append(" text=\"").append(text).append('"')
-                    if (!desc.isNullOrBlank()) append(" desc=\"").append(desc).append('"')
-                    if (node.isClickable) append(" [clickable]")
-                    append(" @").append(bounds.toShortString())
-                }
+                out.append(node.packageName?.toString()?.substringAfterLast('.')).append(": ")
+                out.append(node.className?.toString()?.substringAfterLast('.') ?: "?")
+                if (!text.isNullOrBlank()) out.append(" text=\"").append(text).append('"')
+                if (!desc.isNullOrBlank()) out.append(" desc=\"").append(desc).append('"')
+                if (node.isClickable) out.append(" [clickable]")
+                out.append(" @").append(bounds.toShortString()).append('\n')
+                count++
             }
-            lines.size > 120
+            count > 120
         }
-        return lines.joinToString("\n")
+        return out.toString()
     }
 
     /** Clicks the view showing [label], or its nearest clickable parent; falls back to tapping its centre. */
