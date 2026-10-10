@@ -56,27 +56,30 @@ Then:
 ---
 
 ## AI voice assistant
-Ask a question out loud through the glasses. The answer is **spoken through the glasses**, **shown on your watch**, or both.
+There are four modes, each with its own quick tile and app button. Answers are **spoken through the glasses**, **shown on your watch**, or both; switch with the **AI answers** tile.
+
+| Mode | What it does |
+|---|---|
+| 🎙 **Ask** | One question, one answer. |
+| 💬 **Chat** | Keeps listening after each answer so you can reply right away. Say "stop" or "bye", or stay silent, to end it. |
+| 👁 **Look** | Ask a question (or stay quiet). The glasses take a photo, it's imported straight away, and the AI answers about it. |
+| 🎥 **Video** | Same, but with a short clip (5, 10, 20 or 30 s). The AI sees frames spread across the clip; it doesn't hear the clip's sound. |
+
+Look and Video take about 20–60 seconds, because the photo or clip has to be imported over the glasses' Wi-Fi. Bluetooth drops during the import, so the spoken answer waits until the glasses reconnect.
 
 **Setup**
 1. Get a key at openrouter.ai → Keys, and add some credit.
 2. In Glass Bridge, under **AI voice assistant**:
    - Tap **5. Allow microphone**.
    - Paste the key.
-   - Optionally tap **Browse models…** to pick a model. The default, `openrouter/auto`, lets OpenRouter choose.
-3. Add the **Ask AI** and **AI answers** quick tiles.
+   - Optionally pick a model. The default, `openrouter/auto`, lets OpenRouter choose.
+3. For Look and Video:
+   - Tap **6. Allow photos & videos** and choose **Allow all**, not "Select photos".
+   - Pick an image-capable model with **Browse image models…**.
+   - Make sure RDGlass saves imports to the gallery (Photo album → ⚙️).
+4. Add the tiles: **Ask AI**, **AI chat**, **AI look**, **AI video**, **AI answers**.
 
-**Use**
-1. Tap **Ask AI**: the tile, the 🎙 button on any Glass Bridge notification (also works from the watch), or the button in the app.
-2. Wait for the beep, then speak.
-3. The **AI answers** tile switches between 🔊 Speak, ⌚ Watch, and both.
-
-Follow-up questions within 10 minutes remember the conversation.
-
-**Notes**
-- The glasses' mic is used when they're connected; otherwise the phone's mic is used.
-- Speech recognition uses the phone's built-in Google service.
-- It works over the lock screen.
+Answer notifications have 🎙 Ask / 💬 Chat / 👁 Look buttons, so you can start the next one from your watch. Follow-ups within 10 minutes remember the conversation.
 
 ## Bluetooth selfie remote (optional)
 Pair the remote with your phone. In Glass Bridge, turn on **Bluetooth remote**. Then **volume-up = video** and **volume-down / enter = photo**.
