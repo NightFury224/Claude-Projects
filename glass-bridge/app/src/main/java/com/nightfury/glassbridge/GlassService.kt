@@ -66,6 +66,7 @@ class GlassService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var rdPackage: String? = null
     private var flow: Flow? = null
+    private var flowCommand: String? = null
     private val trace = ArrayList<String>()
     private var flowStartedAt = 0L
     private var queuedImport = false
@@ -196,8 +197,12 @@ class GlassService : AccessibilityService() {
 
     fun handleCommand(command: String) {
         if (flow != null) {
-            if (command == Commands.IMPORT) queuedImport = true
-            else Notifier.status(this, "⏳ Busy", "Still finishing the last command, try again in a moment")
+            when {
+                command == Commands.IMPORT -> queuedImport = true
+                flowCommand == Commands.IMPORT -> Notifier.importing(this,
+                    "Glasses are on Wi-Fi for the import. Try again after ✅ Import finished.")
+                else -> Notifier.status(this, "⏳ Busy", "Still finishing the last command, try again in a moment")
+            }
             return
         }
         val power = getSystemService(PowerManager::class.java)
@@ -254,15 +259,31 @@ class GlassService : AccessibilityService() {
                 var sawImporting = false
                 steps += Step("open the Photo album tab", delayMs = 600) { press("Photo album", 0.624f, 0.925f) }
                 steps += Step("press Import", delayMs = 1_500, timeoutMs = 8_000) { press("Import", 0.82f, 0.156f) }
-                steps += Step("import the files", delayMs = 1_500, timeoutMs = 15 * 60_000L, pollMs = 1_000) {
+                var lastStatus: String? = null
+                // RDGlass must stay open while it imports; the glasses are on Wi-Fi (no Bluetooth) meanwhile.
+                steps += Step("import the files", delayMs = 1_000, timeoutMs = 20 * 60_000L, pollMs = 1_000) {
                     val now = SystemClock.uptimeMillis()
                     if (startedAt == 0L) startedAt = now
-                    val busy = screenContains("importing")
-                    if (busy) sawImporting = true
-                    (sawImporting && !busy) || (!sawImporting && now - startedAt > 8_000)
+                    val inFront = rootInActiveWindow?.packageName?.toString() == rd
+                    val status = if (inFront) importStatus() else null
+                    if (!inFront) {
+                        // Someone switched away; bring RDGlass back so the import keeps going.
+                        trace("RDGlass left the screen during import, reopening it")
+                        launch(rd)
+                    } else if (status != null) {
+                        sawImporting = true
+                        if (status != lastStatus) {
+                            lastStatus = status
+                            trace("Import status: $status")
+                            Notifier.importing(this, status)
+                        }
+                    }
+                    inFront && ((sawImporting && status == null) || (!sawImporting && now - startedAt > 10_000))
                 }
-                steps += Step("finish") {
-                    Notifier.status(this, "✅ Import finished", "Saved to your phone")
+                steps += Step("finish", delayMs = 1_500) {
+                    Notifier.status(this,
+                        if (sawImporting) "✅ Import finished" else "ℹ️ Nothing to import",
+                        "Glasses are ready again")
                     performGlobalAction(GLOBAL_ACTION_HOME)
                 }
             }
@@ -271,11 +292,13 @@ class GlassService : AccessibilityService() {
         trace.clear()
         flowStartedAt = SystemClock.uptimeMillis()
         trace("Command: ${command.substringAfterLast('.')}, RDGlass package: $rd")
+        flowCommand = command
         Flow(steps).also { flow = it }.start()
     }
 
     private fun onFlowEnded() {
         flow = null
+        flowCommand = null
         if (queuedImport) {
             queuedImport = false
             handler.postDelayed(importRunnable, 1_000)
@@ -375,13 +398,26 @@ class GlassService : AccessibilityService() {
         }
     }
 
-    private fun screenContains(fragment: String): Boolean {
-        var found = false
+    /**
+     * While RDGlass imports, its Import button reads "Importing" and a status line such as
+     * "Connecting to Wi-Fi, please wait..." appears. Returns that status, or null when idle.
+     */
+    private fun importStatus(): String? {
+        var importing = false
+        var status: String? = null
         forEachNode { node ->
-            found = node.text?.toString()?.lowercase()?.contains(fragment) == true
-            found
+            for (raw in listOf(node.text, node.contentDescription)) {
+                val value = raw?.toString()?.trim() ?: continue
+                val lower = value.lowercase()
+                if (lower.contains("importing")) importing = true
+                if (lower.contains("wi-fi") || lower.contains("wifi") || lower.contains("%") ||
+                    (lower.contains("import") && lower.contains("/"))
+                ) status = value
+            }
+            false
         }
-        return found
+        if (!importing) return null
+        return status ?: "Importing…"
     }
 
     /** True if [raw] (a view's text or description) is [label], ignoring case and extra parts like "Tab 1 of 4". */

@@ -30,6 +30,11 @@ object Notifier {
 
     fun stoppedRecording(ctx: Context) = cancel(ctx, ID_RECORDING)
 
+    /** Shown while RDGlass imports. No buttons: the glasses can't take commands until it's done. */
+    fun importing(ctx: Context, detail: String) {
+        post(ctx, ID_STATUS, "⬇️ Importing, glasses busy", detail, timeoutMs = 20 * 60_000L, silent = true)
+    }
+
     fun status(ctx: Context, title: String, text: String = "") {
         post(ctx, ID_STATUS, title, text,
             action(ctx, "🎥 Video", Commands.VIDEO),
@@ -39,7 +44,7 @@ object Notifier {
 
     private fun post(
         ctx: Context, id: Int, title: String, text: String,
-        vararg actions: Notification.Action, timeoutMs: Long = 0,
+        vararg actions: Notification.Action, timeoutMs: Long = 0, silent: Boolean = false,
     ) {
         val builder = Notification.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_glasses)
@@ -49,6 +54,7 @@ object Notifier {
             .setCategory(Notification.CATEGORY_STATUS)
         actions.forEach { builder.addAction(it) }
         if (timeoutMs > 0) builder.setTimeoutAfter(timeoutMs)
+        if (silent) builder.setOnlyAlertOnce(true)
         try {
             ctx.getSystemService(NotificationManager::class.java).notify(id, builder.build())
         } catch (_: SecurityException) {
