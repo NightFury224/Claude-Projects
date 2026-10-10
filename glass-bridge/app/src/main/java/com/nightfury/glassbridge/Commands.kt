@@ -32,10 +32,17 @@ object Prefs {
     private const val FILE = "glass_bridge"
     const val AUTO_IMPORT = "auto_import"
     const val REMOTE_KEYS = "remote_keys"
+    const val SCREEN_REPORT = "screen_report"
 
     fun get(ctx: Context, key: String, default: Boolean) =
         ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(key, default)
 
     fun set(ctx: Context, key: String, value: Boolean) =
         ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(key, value).apply()
+
+    fun getString(ctx: Context, key: String): String? =
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(key, null)
+
+    fun setString(ctx: Context, key: String, value: String) =
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(key, value).apply()
 }

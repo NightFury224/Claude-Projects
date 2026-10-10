@@ -16,6 +16,7 @@ import android.os.SystemClock
 import android.service.quicksettings.TileService
 import android.util.Log
 import android.view.KeyEvent
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -238,9 +239,10 @@ class GlassService : AccessibilityService() {
         when (command) {
             Commands.VIDEO, Commands.PHOTO -> {
                 val label = if (command == Commands.VIDEO) "Video" else "Take photo"
-                steps += Step("open the Homepage tab", delayMs = 600) { click("Homepage") }
-                steps += Step("press $label", delayMs = 800) {
-                    click(label).also { if (it) awaitingAck = true }
+                val (x, y) = if (command == Commands.VIDEO) 0.26f to 0.458f else 0.785f to 0.458f
+                steps += Step("open the Homepage tab", delayMs = 600) { press("Homepage", 0.125f, 0.925f) }
+                steps += Step("press $label", delayMs = 1_000) {
+                    press(label, x, y).also { if (it) awaitingAck = true }
                 }
                 steps += Step("hear back from the glasses", timeoutMs = 7_000) { !awaitingAck }
                 steps += Step("go back", delayMs = 1_500) { performGlobalAction(GLOBAL_ACTION_HOME) }
@@ -248,8 +250,8 @@ class GlassService : AccessibilityService() {
             Commands.IMPORT -> {
                 var startedAt = 0L
                 var sawImporting = false
-                steps += Step("open the Photo album tab", delayMs = 600) { click("Photo album") }
-                steps += Step("press Import", delayMs = 1_200, timeoutMs = 8_000) { click("Import") }
+                steps += Step("open the Photo album tab", delayMs = 600) { press("Photo album", 0.624f, 0.925f) }
+                steps += Step("press Import", delayMs = 1_500, timeoutMs = 8_000) { press("Import", 0.82f, 0.156f) }
                 steps += Step("import the files", delayMs = 1_500, timeoutMs = 15 * 60_000L, pollMs = 1_000) {
                     val now = SystemClock.uptimeMillis()
                     if (startedAt == 0L) startedAt = now
@@ -313,13 +315,15 @@ class GlassService : AccessibilityService() {
 
         private fun fail(step: Step) {
             Log.w(TAG, "Failed to ${step.desc}")
+            Prefs.setString(this@GlassService, Prefs.SCREEN_REPORT,
+                "Failed to ${step.desc}\n\n" + screenReport())
             if (awaitingAck) {
                 awaitingAck = false
                 Notifier.status(this@GlassService, "⚠️ Glasses didn't respond",
                     "Check that the glasses are on and connected, then try again")
             } else {
                 Notifier.status(this@GlassService, "⚠️ Couldn't ${step.desc}",
-                    "Open RDGlass and check what's on screen")
+                    "Open Glass Bridge → Copy screen report, and send it to Claude")
             }
             performGlobalAction(GLOBAL_ACTION_HOME)
             onFlowEnded()
@@ -358,6 +362,7 @@ class GlassService : AccessibilityService() {
         while (queue.isNotEmpty() && budget-- > 0) {
             val node = queue.removeFirst()
             node.text?.let { out.add(it.toString()) }
+            node.contentDescription?.let { out.add(it.toString()) }
             for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it) }
         }
     }
@@ -371,32 +376,96 @@ class GlassService : AccessibilityService() {
         return found
     }
 
+    /** True if [raw] (a view's text or description) is [label], ignoring case and extra parts like "Tab 1 of 4". */
+    private fun matches(raw: CharSequence?, label: String): Boolean {
+        if (raw == null) return false
+        val wanted = label.lowercase()
+        return raw.toString().lowercase().split('\n', ',', '|').any { it.trim() == wanted }
+    }
+
     private fun findExact(label: String): AccessibilityNodeInfo? {
         var match: AccessibilityNodeInfo? = null
         forEachNode { node ->
-            val text = (node.text ?: node.contentDescription)?.toString()?.trim()
-            if (text.equals(label, ignoreCase = true) && node.isVisibleToUser) match = node
+            if ((matches(node.text, label) || matches(node.contentDescription, label)) && node.isVisibleToUser) {
+                match = node
+            }
             match != null
         }
         return match
     }
 
-    /** Clicks the view showing [label], or its nearest clickable parent; falls back to a screen tap. */
-    private fun click(label: String): Boolean {
-        val node = findExact(label) ?: return false
-        var current: AccessibilityNodeInfo? = node
-        while (current != null) {
-            if (current.isClickable && current.isEnabled) {
-                return current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            }
-            current = current.parent
+    private val pressStartedAt = HashMap<String, Long>()
+
+    /**
+     * Presses the button labelled [label]. If RDGlass doesn't expose that label, falls back after
+     * a couple of seconds to tapping where the button sits on screen ([fx], [fy] as screen fractions).
+     */
+    private fun press(label: String, fx: Float, fy: Float): Boolean {
+        if (click(label)) {
+            pressStartedAt.remove(label)
+            return true
         }
-        val bounds = Rect().also { node.getBoundsInScreen(it) }
-        if (bounds.isEmpty) return false
-        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+        val now = SystemClock.uptimeMillis()
+        val started = pressStartedAt.getOrPut(label) { now }
+        if (now - started < 2_500) return false
+        pressStartedAt.remove(label)
+        Log.i(TAG, "'$label' not found, tapping its usual position")
+        return tapAt(fx, fy)
+    }
+
+    private fun tapAt(fx: Float, fy: Float): Boolean {
+        val (width, height) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels
+        }
+        return tapPoint(width * fx, height * fy)
+    }
+
+    private fun tapPoint(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
             .build()
         return dispatchGesture(gesture, null, null)
+    }
+
+    /** Lists what RDGlass shows to accessibility, so a failed step can be diagnosed. */
+    private fun screenReport(): String {
+        val lines = ArrayList<String>()
+        lines += "Active app: ${rootInActiveWindow?.packageName}"
+        val bounds = Rect()
+        forEachNode { node ->
+            val text = node.text?.toString()?.replace('\n', ' ')
+            val desc = node.contentDescription?.toString()?.replace('\n', ' ')
+            if (!text.isNullOrBlank() || !desc.isNullOrBlank() || node.isClickable) {
+                node.getBoundsInScreen(bounds)
+                lines += buildString {
+                    append(node.className?.toString()?.substringAfterLast('.') ?: "?")
+                    if (!text.isNullOrBlank()) append(" text=\"").append(text).append('"')
+                    if (!desc.isNullOrBlank()) append(" desc=\"").append(desc).append('"')
+                    if (node.isClickable) append(" [clickable]")
+                    append(" @").append(bounds.toShortString())
+                }
+            }
+            lines.size > 120
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** Clicks the view showing [label], or its nearest clickable parent; falls back to tapping its centre. */
+    private fun click(label: String): Boolean {
+        val node = findExact(label) ?: return false
+        var current: AccessibilityNodeInfo? = node
+        while (current != null) {
+            if (current.isClickable && current.isEnabled &&
+                current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            ) return true
+            current = current.parent
+        }
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        if (bounds.isEmpty) return false
+        return tapPoint(bounds.exactCenterX(), bounds.exactCenterY())
     }
 }

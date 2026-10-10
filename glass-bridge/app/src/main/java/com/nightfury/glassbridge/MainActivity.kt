@@ -2,6 +2,8 @@ package com.nightfury.glassbridge
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -16,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 
 /** Setup checklist, options and test buttons. */
 class MainActivity : Activity() {
@@ -59,6 +62,17 @@ class MainActivity : Activity() {
         column.addView(button("🎥 Start / stop video") { Commands.run(this, Commands.VIDEO) })
         column.addView(button("📸 Take photo") { Commands.run(this, Commands.PHOTO) })
         column.addView(button("⬇️ Import now") { Commands.run(this, Commands.IMPORT) })
+        column.addView(heading("Troubleshooting"))
+        column.addView(button("📋 Copy screen report (send it to Claude)") {
+            val report = Prefs.getString(this, Prefs.SCREEN_REPORT)
+            if (report == null) {
+                Toast.makeText(this, "No report yet. It's saved when a command fails.", Toast.LENGTH_LONG).show()
+            } else {
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("Glass Bridge screen report", report))
+                Toast.makeText(this, "Copied. Paste it in your chat with Claude.", Toast.LENGTH_LONG).show()
+            }
+        })
         column.addView(TextView(this).apply {
             textSize = 14f
             text = "\nTip: add the \"Glasses video\", \"Glasses photo\" and \"Glasses import\" tiles to your " +
