@@ -13,6 +13,7 @@ object Notifier {
     private const val CHANNEL = "glasses_status"
     private const val ID_RECORDING = 1
     private const val ID_STATUS = 2
+    private const val ID_ANSWER = 4
 
     fun createChannel(ctx: Context) {
         val channel = NotificationChannel(CHANNEL, "Glasses status", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -39,7 +40,34 @@ object Notifier {
         post(ctx, ID_STATUS, title, text,
             action(ctx, "🎥 Video", Commands.VIDEO),
             action(ctx, "📸 Photo", Commands.PHOTO),
+            askAction(ctx),
             timeoutMs = 2 * 60_000L)
+    }
+
+    /** The AI's answer, readable in full on the watch. */
+    fun answer(ctx: Context, question: String, answer: String) {
+        val title = "🤖 " + if (question.length > 60) question.take(57) + "…" else question
+        val builder = Notification.Builder(ctx, CHANNEL)
+            .setSmallIcon(R.drawable.ic_glasses)
+            .setContentTitle(title)
+            .setContentText(answer)
+            .setStyle(Notification.BigTextStyle().bigText(answer))
+            .setAutoCancel(true)
+            .setTimeoutAfter(30 * 60_000L)
+            .addAction(askAction(ctx))
+        try {
+            ctx.getSystemService(NotificationManager::class.java).notify(ID_ANSWER, builder.build())
+        } catch (_: SecurityException) {
+        }
+    }
+
+    /** Opens the voice assistant directly (activities can't be started from a broadcast). */
+    fun askAction(ctx: Context): Notification.Action {
+        val intent = Intent(ctx, AssistantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pending = PendingIntent.getActivity(
+            ctx, 42, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(Icon.createWithResource(ctx, R.drawable.ic_glasses), "🎙 Ask AI", pending).build()
     }
 
     private fun post(

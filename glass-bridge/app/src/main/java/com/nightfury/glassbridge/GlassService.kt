@@ -494,7 +494,8 @@ class GlassService : AccessibilityService() {
     /** Lists what RDGlass shows to accessibility, so a failed step can be diagnosed. */
     private fun screenReport(): String {
         val out = StringBuilder()
-        out.append("Glass Bridge report\n\n")
+        val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull()
+        out.append("Glass Bridge report (v").append(version).append(")\n\n")
         trace.forEach { out.append(it).append('\n') }
         out.append("\nFront app: ").append(rootInActiveWindow?.packageName).append('\n')
         out.append("Windows: ").append(windows.joinToString { "${it.root?.packageName}(${it.type})" }).append("\n\n")

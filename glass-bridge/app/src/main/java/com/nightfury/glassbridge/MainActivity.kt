@@ -2,6 +2,7 @@ package com.nightfury.glassbridge
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -12,8 +13,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -58,6 +63,28 @@ class MainActivity : Activity() {
         column.addView(toggle("Auto-import after every video or photo", Prefs.AUTO_IMPORT, true))
         column.addView(toggle("Bluetooth remote: volume-up = video, volume-down = photo", Prefs.REMOTE_KEYS, false))
 
+        column.addView(heading("AI voice assistant"))
+        column.addView(button("5. Allow microphone") {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
+        })
+        column.addView(label("OpenRouter API key (openrouter.ai → Keys)"))
+        column.addView(field(Prefs.AI_KEY, "sk-or-…", secret = true))
+        column.addView(label("Model (openrouter/auto lets OpenRouter choose)"))
+        val modelField = field(Prefs.AI_MODEL, AiClient.DEFAULT_MODEL, secret = false)
+        column.addView(modelField)
+        column.addView(button("Browse models…") { pickModel(modelField) })
+        val modeButton = Button(this).apply { isAllCaps = false }
+        fun showMode() { modeButton.text = "Answers: " + AnswerMode.current(this).shortName + "  (tap to change)" }
+        showMode()
+        modeButton.setOnClickListener {
+            AnswerMode.set(this, AnswerMode.current(this).next())
+            showMode()
+        }
+        column.addView(modeButton)
+        column.addView(button("🎙 Ask AI now") {
+            startActivity(Intent(this, AssistantActivity::class.java))
+        })
+
         column.addView(heading("Test"))
         column.addView(button("🎥 Start / stop video") { Commands.run(this, Commands.VIDEO) })
         column.addView(button("📸 Take photo") { Commands.run(this, Commands.PHOTO) })
@@ -95,7 +122,55 @@ class MainActivity : Activity() {
             mark(serviceOn) + " Accessibility service",
             mark(notifications) + " Notifications",
             mark(battery) + " Battery unrestricted",
+            mark(checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) +
+                " Microphone",
+            mark(!Prefs.getString(this, Prefs.AI_KEY).isNullOrBlank()) + " OpenRouter key",
+            "Version " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull(),
         ).joinToString("\n")
+    }
+
+    private fun label(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 14f
+        setPadding(0, 16, 0, 0)
+    }
+
+    private fun field(key: String, hint: String, secret: Boolean) = EditText(this).apply {
+        this.hint = hint
+        setText(Prefs.getString(this@MainActivity, key).orEmpty())
+        isSingleLine = true
+        inputType = if (secret) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                Prefs.setString(this@MainActivity, key, s?.toString()?.trim().orEmpty())
+            }
+        })
+    }
+
+    /** Lists OpenRouter's models (popular providers first) and fills the model field. */
+    private fun pickModel(target: EditText) {
+        Toast.makeText(this, "Loading models…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = runCatching { AiClient.models() }
+            runOnUiThread {
+                result.onSuccess { all ->
+                    val preferred = listOf("anthropic/", "openai/", "google/", "x-ai/", "deepseek/", "meta-llama/")
+                    val models = listOf(AiClient.DEFAULT_MODEL) +
+                        all.filter { id -> preferred.any { id.startsWith(it) } }
+                            .sortedBy { id -> preferred.indexOfFirst { id.startsWith(it) } }
+                    AlertDialog.Builder(this)
+                        .setTitle("Choose a model")
+                        .setItems(models.toTypedArray()) { _, which -> target.setText(models[which]) }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }.onFailure {
+                    Toast.makeText(this, "Couldn't load models: ${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 
     private fun mark(ok: Boolean) = if (ok) "✅" else "❌"

@@ -33,6 +33,9 @@ object Prefs {
     const val AUTO_IMPORT = "auto_import"
     const val REMOTE_KEYS = "remote_keys"
     const val SCREEN_REPORT = "screen_report"
+    const val AI_KEY = "ai_key"
+    const val AI_MODEL = "ai_model"
+    const val AI_MODE = "ai_mode"
 
     fun get(ctx: Context, key: String, default: Boolean) =
         ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(key, default)
