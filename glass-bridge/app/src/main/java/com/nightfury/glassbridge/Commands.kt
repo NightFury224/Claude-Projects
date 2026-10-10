@@ -36,6 +36,8 @@ object Prefs {
     const val AI_KEY = "ai_key"
     const val AI_MODEL = "ai_model"
     const val AI_MODE = "ai_mode"
+    const val AI_VISION_MODEL = "ai_vision_model"
+    const val AI_CLIP_SECONDS = "ai_clip_seconds"
 
     fun get(ctx: Context, key: String, default: Boolean) =
         ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(key, default)
@@ -48,4 +50,10 @@ object Prefs {
 
     fun setString(ctx: Context, key: String, value: String) =
         ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(key, value).apply()
+
+    fun getInt(ctx: Context, key: String, default: Int) =
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getInt(key, default)
+
+    fun setInt(ctx: Context, key: String, value: Int) =
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putInt(key, value).apply()
 }

@@ -40,7 +40,7 @@ object Notifier {
         post(ctx, ID_STATUS, title, text,
             action(ctx, "🎥 Video", Commands.VIDEO),
             action(ctx, "📸 Photo", Commands.PHOTO),
-            askAction(ctx),
+            aiAction(ctx, AiMode.ASK, "🎙 Ask AI"),
             timeoutMs = 2 * 60_000L)
     }
 
@@ -54,20 +54,21 @@ object Notifier {
             .setStyle(Notification.BigTextStyle().bigText(answer))
             .setAutoCancel(true)
             .setTimeoutAfter(30 * 60_000L)
-            .addAction(askAction(ctx))
+            .addAction(aiAction(ctx, AiMode.ASK, "🎙 Ask"))
+            .addAction(aiAction(ctx, AiMode.CHAT, "💬 Chat"))
+            .addAction(aiAction(ctx, AiMode.LOOK, "👁 Look"))
         try {
             ctx.getSystemService(NotificationManager::class.java).notify(ID_ANSWER, builder.build())
         } catch (_: SecurityException) {
         }
     }
 
-    /** Opens the voice assistant directly (activities can't be started from a broadcast). */
-    fun askAction(ctx: Context): Notification.Action {
-        val intent = Intent(ctx, AssistantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    /** Opens the voice assistant in [mode] directly (activities can't be started from a broadcast). */
+    fun aiAction(ctx: Context, mode: AiMode, label: String): Notification.Action {
         val pending = PendingIntent.getActivity(
-            ctx, 42, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            ctx, 40 + mode.ordinal, mode.intent(ctx), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return Notification.Action.Builder(Icon.createWithResource(ctx, R.drawable.ic_glasses), "🎙 Ask AI", pending).build()
+        return Notification.Action.Builder(Icon.createWithResource(ctx, R.drawable.ic_glasses), label, pending).build()
     }
 
     private fun post(

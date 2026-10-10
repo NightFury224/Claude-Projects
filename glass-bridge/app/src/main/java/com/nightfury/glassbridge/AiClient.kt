@@ -26,8 +26,17 @@ object AiClient {
     fun model(ctx: Context) =
         Prefs.getString(ctx, Prefs.AI_MODEL)?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_MODEL
 
-    /** Blocking; call from a background thread. */
-    fun ask(ctx: Context, question: String): String {
+    /** Model for photo/video questions; must accept images. Falls back to the main model. */
+    fun visionModel(ctx: Context) =
+        Prefs.getString(ctx, Prefs.AI_VISION_MODEL)?.trim()?.takeIf { it.isNotEmpty() } ?: model(ctx)
+
+    class ModelInfo(val id: String, val seesImages: Boolean)
+
+    /**
+     * Blocking; call from a background thread. [images] are base64 JPEGs from the glasses camera
+     * (one photo, or several frames of a video).
+     */
+    fun ask(ctx: Context, question: String, images: List<String> = emptyList(), video: Boolean = false): String {
         val key = Prefs.getString(ctx, Prefs.AI_KEY)?.trim().orEmpty()
         if (key.isEmpty()) throw IOException("Add your OpenRouter API key in the Glass Bridge app")
 
@@ -36,13 +45,22 @@ object AiClient {
             if (now - lastAskedAt > FORGET_AFTER_MS) history.clear()
             history.toList()
         }
-        val userMessage = JSONObject().put("role", "user").put("content", question)
+        val content: Any = if (images.isEmpty()) question else JSONArray().apply {
+            val intro = if (video) "These are ${images.size} frames, in order, from a short video my glasses just recorded. "
+            else "This is a photo my glasses just took. "
+            put(JSONObject().put("type", "text").put("text", intro + question))
+            images.forEach {
+                put(JSONObject().put("type", "image_url")
+                    .put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$it")))
+            }
+        }
+        val userMessage = JSONObject().put("role", "user").put("content", content)
         val messages = JSONArray().put(JSONObject().put("role", "system").put("content", systemPrompt()))
         earlier.forEach { messages.put(it) }
         messages.put(userMessage)
 
         val body = JSONObject()
-            .put("model", model(ctx))
+            .put("model", if (images.isEmpty()) model(ctx) else visionModel(ctx))
             .put("messages", messages)
             .put("max_tokens", 600)
         val response = request("POST", "$BASE/chat/completions", key, body.toString())
@@ -51,7 +69,10 @@ object AiClient {
         if (answer.isEmpty()) throw IOException("The model returned an empty answer")
 
         synchronized(history) {
-            history += userMessage
+            // Remember only the words, not the (large) images, for follow-up questions.
+            history += JSONObject().put("role", "user").put("content",
+                if (images.isEmpty()) question
+                else "[I showed you a ${if (video) "video" else "photo"} from my glasses] $question")
             history += JSONObject().put("role", "assistant").put("content", answer)
             while (history.size > MAX_HISTORY) history.removeAt(0)
             lastAskedAt = now
@@ -61,10 +82,15 @@ object AiClient {
 
     fun forget() = synchronized(history) { history.clear() }
 
-    /** Model ids available on OpenRouter, for the picker. Blocking. */
-    fun models(): List<String> {
+    /** Models available on OpenRouter, for the picker. Blocking. */
+    fun models(): List<ModelInfo> {
         val data = JSONObject(request("GET", "$BASE/models", null, null)).getJSONArray("data")
-        return (0 until data.length()).map { data.getJSONObject(it).getString("id") }.sorted()
+        return (0 until data.length()).map { i ->
+            val model = data.getJSONObject(i)
+            val inputs = model.optJSONObject("architecture")?.optJSONArray("input_modalities")
+            val seesImages = inputs != null && (0 until inputs.length()).any { inputs.optString(it) == "image" }
+            ModelInfo(model.getString("id"), seesImages)
+        }.sortedBy { it.id }
     }
 
     private fun systemPrompt(): String {
@@ -73,6 +99,8 @@ object AiClient {
             "speech recognition and may contain mistakes; infer what they meant. Your answer is either " +
             "spoken aloud or shown on a small smartwatch screen, so reply in plain text without markdown, " +
             "lists or emoji, and keep it short (one to three sentences) unless the user asks for detail. " +
+            "Images, when included, come from the camera on the user's glasses, so they show what the " +
+            "user is looking at; answer about them directly. " +
             "Current date and time: $now."
     }
 

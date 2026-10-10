@@ -72,7 +72,26 @@ class MainActivity : Activity() {
         column.addView(label("Model (openrouter/auto lets OpenRouter choose)"))
         val modelField = field(Prefs.AI_MODEL, AiClient.DEFAULT_MODEL, secret = false)
         column.addView(modelField)
-        column.addView(button("Browse models…") { pickModel(modelField) })
+        column.addView(button("Browse models…") { pickModel(modelField, imagesOnly = false) })
+        column.addView(label("Model for Look / Video (must understand images; blank = same as above)"))
+        val visionField = field(Prefs.AI_VISION_MODEL, "same as above", secret = false)
+        column.addView(visionField)
+        column.addView(button("Browse image models…") { pickModel(visionField, imagesOnly = true) })
+        column.addView(button("6. Allow photos & videos (for Look / Video)") {
+            requestPermissions(AssistantActivity.mediaPermissions(), 3)
+        })
+        val clipButton = Button(this).apply { isAllCaps = false }
+        fun showClip() {
+            clipButton.text = "Video clip length: ${Prefs.getInt(this, Prefs.AI_CLIP_SECONDS, 10)} s  (tap to change)"
+        }
+        showClip()
+        clipButton.setOnClickListener {
+            val options = listOf(5, 10, 20, 30)
+            val current = Prefs.getInt(this, Prefs.AI_CLIP_SECONDS, 10)
+            Prefs.setInt(this, Prefs.AI_CLIP_SECONDS, options[(options.indexOf(current) + 1) % options.size])
+            showClip()
+        }
+        column.addView(clipButton)
         val modeButton = Button(this).apply { isAllCaps = false }
         fun showMode() { modeButton.text = "Answers: " + AnswerMode.current(this).shortName + "  (tap to change)" }
         showMode()
@@ -81,9 +100,10 @@ class MainActivity : Activity() {
             showMode()
         }
         column.addView(modeButton)
-        column.addView(button("🎙 Ask AI now") {
-            startActivity(Intent(this, AssistantActivity::class.java))
-        })
+        column.addView(button("🎙 Ask (one question)") { startActivity(AiMode.ASK.intent(this)) })
+        column.addView(button("💬 Chat (keeps listening; say \"stop\" to end)") { startActivity(AiMode.CHAT.intent(this)) })
+        column.addView(button("👁 Look (photo from the glasses)") { startActivity(AiMode.LOOK.intent(this)) })
+        column.addView(button("🎥 Video (short clip from the glasses)") { startActivity(AiMode.VIDEO.intent(this)) })
 
         column.addView(heading("Test"))
         column.addView(button("🎥 Start / stop video") { Commands.run(this, Commands.VIDEO) })
@@ -151,7 +171,7 @@ class MainActivity : Activity() {
     }
 
     /** Lists OpenRouter's models (popular providers first) and fills the model field. */
-    private fun pickModel(target: EditText) {
+    private fun pickModel(target: EditText, imagesOnly: Boolean) {
         Toast.makeText(this, "Loading models…", Toast.LENGTH_SHORT).show()
         Thread {
             val result = runCatching { AiClient.models() }
@@ -159,7 +179,8 @@ class MainActivity : Activity() {
                 result.onSuccess { all ->
                     val preferred = listOf("anthropic/", "openai/", "google/", "x-ai/", "deepseek/", "meta-llama/")
                     val models = listOf(AiClient.DEFAULT_MODEL) +
-                        all.filter { id -> preferred.any { id.startsWith(it) } }
+                        all.filter { !imagesOnly || it.seesImages }.map { it.id }
+                            .filter { id -> preferred.any { id.startsWith(it) } }
                             .sortedBy { id -> preferred.indexOfFirst { id.startsWith(it) } }
                     AlertDialog.Builder(this)
                         .setTitle("Choose a model")

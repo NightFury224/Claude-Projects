@@ -30,10 +30,10 @@ class PhotoTile : GlassTile(Commands.PHOTO)
 
 class ImportTile : GlassTile(Commands.IMPORT)
 
-/** Starts the voice assistant. */
-class AskTile : TileService() {
+/** Starts the voice assistant in one of its modes. */
+abstract class AiTile(private val mode: AiMode) : TileService() {
     override fun onClick() {
-        val intent = Intent(this, AssistantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = mode.intent(this)
         if (Build.VERSION.SDK_INT >= 34) {
             startActivityAndCollapse(
                 PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
@@ -44,6 +44,11 @@ class AskTile : TileService() {
         }
     }
 }
+
+class AskTile : AiTile(AiMode.ASK)
+class ChatTile : AiTile(AiMode.CHAT)
+class LookTile : AiTile(AiMode.LOOK)
+class ClipTile : AiTile(AiMode.VIDEO)
 
 /** Switches where AI answers go: spoken, watch, or both. */
 class AiModeTile : TileService() {

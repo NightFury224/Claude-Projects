@@ -6,6 +6,7 @@ import android.app.KeyguardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
@@ -83,6 +84,13 @@ class GlassService : AccessibilityService() {
         matchPopups(texts)
     }
     private val importRunnable = Runnable { if (!recording) handleCommand(Commands.IMPORT) }
+
+    /** A photo or clip the AI assistant is waiting for (taken, then imported straight away). */
+    private class AiCapture(val video: Boolean, val seconds: Int, val since: Long, val callback: (Result<Uri>) -> Unit)
+
+    private var aiCapture: AiCapture? = null
+    private val stopClipRunnable = Runnable { if (recording) handleCommand(Commands.VIDEO) }
+    private val aiTimeout = Runnable { finishAiCapture(Result.failure(Exception("Timed out waiting for the glasses"))) }
     private val unlockTimeout = Runnable { onUnlockResult(false) }
 
     override fun onServiceConnected() {
@@ -143,12 +151,13 @@ class GlassService : AccessibilityService() {
             Popup.STARTED -> {
                 recording = true
                 Notifier.recording(this)
+                aiCapture?.takeIf { it.video }?.let { handler.postDelayed(stopClipRunnable, it.seconds * 1_000L) }
             }
             Popup.FINISHED -> {
                 recording = false
                 Notifier.stoppedRecording(this)
                 Notifier.status(this, "✅ Video saved",
-                    if (autoImport) "Importing to your phone…" else "Tap Import to copy it to your phone")
+                    if (autoImport || aiCapture != null) "Importing to your phone…" else "Tap Import to copy it to your phone")
                 scheduleImport()
             }
             Popup.PHOTO -> {
@@ -158,6 +167,7 @@ class GlassService : AccessibilityService() {
             Popup.BUSY -> {
                 recording = true
                 Notifier.status(this, "⚠️ Still recording", "Stop the video first")
+                finishAiCapture(Result.failure(Exception("The glasses are recording a video; stop it first")))
             }
         }
         TileService.requestListeningState(this, ComponentName(this, VideoTile::class.java))
@@ -165,9 +175,51 @@ class GlassService : AccessibilityService() {
 
     /** Waits a few seconds so several photos in a row are imported in one go. */
     private fun scheduleImport() {
-        if (!Prefs.get(this, Prefs.AUTO_IMPORT, true)) return
+        val forAi = aiCapture != null
+        if (!forAi && !Prefs.get(this, Prefs.AUTO_IMPORT, true)) return
         handler.removeCallbacks(importRunnable)
-        handler.postDelayed(importRunnable, 6_000)
+        // The AI is waiting, so import right away instead of batching.
+        handler.postDelayed(importRunnable, if (forAi) 2_500 else 6_000)
+    }
+
+    /**
+     * Takes a photo (or records a clip of [seconds]) with the glasses, imports it, and returns the
+     * new file from the phone's gallery. Used by the AI assistant's Look and Video modes.
+     */
+    fun captureForAi(video: Boolean, seconds: Int, callback: (Result<Uri>) -> Unit) {
+        if (aiCapture != null || flow != null) {
+            callback(Result.failure(Exception("The glasses are busy, try again in a moment")))
+            return
+        }
+        if (recording) {
+            callback(Result.failure(Exception("The glasses are recording a video; stop it first")))
+            return
+        }
+        aiCapture = AiCapture(video, seconds, System.currentTimeMillis(), callback)
+        handler.postDelayed(aiTimeout, (seconds + 240) * 1_000L)
+        handleCommand(if (video) Commands.VIDEO else Commands.PHOTO)
+    }
+
+    private fun finishAiCapture(result: Result<Uri>) {
+        val job = aiCapture ?: return
+        aiCapture = null
+        handler.removeCallbacks(aiTimeout)
+        handler.removeCallbacks(stopClipRunnable)
+        job.callback(result)
+    }
+
+    /** Imported files can take a moment to appear in the gallery, so look a few times. */
+    private fun findAiMedia(job: AiCapture, attempt: Int = 0) {
+        if (aiCapture !== job) return
+        val uri = runCatching { GlassMedia.newest(this, job.video, job.since) }
+        when {
+            uri.isFailure -> finishAiCapture(Result.failure(uri.exceptionOrNull()!!))
+            uri.getOrNull() != null -> finishAiCapture(Result.success(uri.getOrNull()!!))
+            attempt < 10 -> handler.postDelayed({ findAiMedia(job, attempt + 1) }, 1_000)
+            else -> finishAiCapture(Result.failure(Exception(
+                "Imported, but the new ${if (job.video) "video" else "photo"} isn't in the gallery. " +
+                    "Turn on saving to the gallery in RDGlass → Photo album → ⚙️.")))
+        }
     }
 
     // ---- Bluetooth remote buttons ----
@@ -296,9 +348,16 @@ class GlassService : AccessibilityService() {
         Flow(steps).also { flow = it }.start()
     }
 
-    private fun onFlowEnded() {
+    private fun onFlowEnded(success: Boolean) {
+        val command = flowCommand
         flow = null
         flowCommand = null
+        aiCapture?.let { job ->
+            when {
+                !success -> finishAiCapture(Result.failure(Exception("The glasses didn't respond")))
+                command == Commands.IMPORT -> findAiMedia(job)
+            }
+        }
         if (queuedImport) {
             queuedImport = false
             handler.postDelayed(importRunnable, 1_000)
@@ -315,7 +374,7 @@ class GlassService : AccessibilityService() {
             if (index >= steps.size) {
                 trace("Done")
                 Prefs.setString(this@GlassService, Prefs.SCREEN_REPORT, screenReport())
-                onFlowEnded()
+                onFlowEnded(true)
                 return
             }
             handler.postDelayed({
@@ -357,7 +416,7 @@ class GlassService : AccessibilityService() {
                     "Open Glass Bridge → Copy screen report, and send it to Claude")
             }
             performGlobalAction(GLOBAL_ACTION_HOME)
-            onFlowEnded()
+            onFlowEnded(false)
         }
     }
 
