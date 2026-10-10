@@ -36,7 +36,8 @@ object Prefs {
     const val AI_KEY = "ai_key"
     const val AI_MODEL = "ai_model"
     const val AI_MODE = "ai_mode"
-    const val AI_VISION_MODEL = "ai_vision_model"
+    const val AI_MODEL_CACHE = "ai_model_cache"
+    const val AI_MODEL_CACHE_TIME = "ai_model_cache_time"
     const val AI_CLIP_SECONDS = "ai_clip_seconds"
 
     fun get(ctx: Context, key: String, default: Boolean) =

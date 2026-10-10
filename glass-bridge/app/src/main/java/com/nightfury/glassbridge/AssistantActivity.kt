@@ -108,7 +108,10 @@ class AssistantActivity : Activity() {
         transcriptView.text = ""
         title = mode.title
         if (Prefs.getString(this, Prefs.AI_KEY).isNullOrBlank()) {
-            statusView.text = "⚠️ Add your OpenRouter API key in the Glass Bridge app first"
+            statusView.text = "🔑 Add your OpenRouter API key to start"
+            Dialogs.askForKey(this) {
+                if (!Prefs.getString(this, Prefs.AI_KEY).isNullOrBlank()) begin(mode.intent(this))
+            }
             return
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {

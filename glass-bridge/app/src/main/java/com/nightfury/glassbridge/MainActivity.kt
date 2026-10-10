@@ -2,7 +2,6 @@ package com.nightfury.glassbridge
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -13,12 +12,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.text.Editable
-import android.text.InputType
-import android.text.TextWatcher
 import android.view.View
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -67,16 +62,14 @@ class MainActivity : Activity() {
         column.addView(button("5. Allow microphone") {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
         })
-        column.addView(label("OpenRouter API key (openrouter.ai → Keys)"))
-        column.addView(field(Prefs.AI_KEY, "sk-or-…", secret = true))
-        column.addView(label("Model (openrouter/auto lets OpenRouter choose)"))
-        val modelField = field(Prefs.AI_MODEL, AiClient.DEFAULT_MODEL, secret = false)
-        column.addView(modelField)
-        column.addView(button("Browse models…") { pickModel(modelField, imagesOnly = false) })
-        column.addView(label("Model for Look / Video (must understand images; blank = same as above)"))
-        val visionField = field(Prefs.AI_VISION_MODEL, "same as above", secret = false)
-        column.addView(visionField)
-        column.addView(button("Browse image models…") { pickModel(visionField, imagesOnly = true) })
+        val keyButton = Button(this).apply { isAllCaps = false }
+        keyButton.text = Dialogs.keyStatus(this)
+        keyButton.setOnClickListener { Dialogs.askForKey(this) { keyButton.text = Dialogs.keyStatus(this) } }
+        column.addView(keyButton)
+        val modelButton = Button(this).apply { isAllCaps = false }
+        modelButton.text = Dialogs.modelStatus(this)
+        modelButton.setOnClickListener { Dialogs.pickModel(this) { modelButton.text = Dialogs.modelStatus(this) } }
+        column.addView(modelButton)
         column.addView(button("6. Allow photos & videos (for Look / Video)") {
             requestPermissions(AssistantActivity.mediaPermissions(), 3)
         })
@@ -147,51 +140,6 @@ class MainActivity : Activity() {
             mark(!Prefs.getString(this, Prefs.AI_KEY).isNullOrBlank()) + " OpenRouter key",
             "Version " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull(),
         ).joinToString("\n")
-    }
-
-    private fun label(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 14f
-        setPadding(0, 16, 0, 0)
-    }
-
-    private fun field(key: String, hint: String, secret: Boolean) = EditText(this).apply {
-        this.hint = hint
-        setText(Prefs.getString(this@MainActivity, key).orEmpty())
-        isSingleLine = true
-        inputType = if (secret) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                Prefs.setString(this@MainActivity, key, s?.toString()?.trim().orEmpty())
-            }
-        })
-    }
-
-    /** Lists OpenRouter's models (popular providers first) and fills the model field. */
-    private fun pickModel(target: EditText, imagesOnly: Boolean) {
-        Toast.makeText(this, "Loading models…", Toast.LENGTH_SHORT).show()
-        Thread {
-            val result = runCatching { AiClient.models() }
-            runOnUiThread {
-                result.onSuccess { all ->
-                    val preferred = listOf("anthropic/", "openai/", "google/", "x-ai/", "deepseek/", "meta-llama/")
-                    val models = listOf(AiClient.DEFAULT_MODEL) +
-                        all.filter { !imagesOnly || it.seesImages }.map { it.id }
-                            .filter { id -> preferred.any { id.startsWith(it) } }
-                            .sortedBy { id -> preferred.indexOfFirst { id.startsWith(it) } }
-                    AlertDialog.Builder(this)
-                        .setTitle("Choose a model")
-                        .setItems(models.toTypedArray()) { _, which -> target.setText(models[which]) }
-                        .setNegativeButton("Cancel", null)
-                        .show()
-                }.onFailure {
-                    Toast.makeText(this, "Couldn't load models: ${it.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
     }
 
     private fun mark(ok: Boolean) = if (ok) "✅" else "❌"
