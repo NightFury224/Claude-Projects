@@ -68,16 +68,12 @@ There are four modes, each with its own quick tile and app button. Answers are *
 Look and Video take about 20–60 seconds, because the photo or clip has to be imported over the glasses' Wi-Fi. Bluetooth drops during the import, so the spoken answer waits until the glasses reconnect.
 
 **Setup**
-1. Get a key at openrouter.ai → Keys, and add some credit.
-2. In Glass Bridge, under **AI voice assistant**:
-   - Tap **5. Allow microphone**.
-   - Paste the key.
-   - Optionally pick a model. The default, `openrouter/auto`, lets OpenRouter choose.
-3. For Look and Video:
-   - Tap **6. Allow photos & videos** and choose **Allow all**, not "Select photos".
-   - Pick an image-capable model with **Browse image models…**.
-   - Make sure RDGlass saves imports to the gallery (Photo album → ⚙️).
-4. Add the tiles: **Ask AI**, **AI chat**, **AI look**, **AI video**, **AI answers**.
+1. Tap **🔑 Add OpenRouter API key**, paste your key from openrouter.ai → Keys, and tap **Save**. The app checks that the key works. One key works for every model.
+2. Tap **🤖 Model**. The list only shows **free models that understand images**, best first. **⭐ Auto** (the default) uses the best one and falls back to the next if it's busy or rate-limited.
+3. If you get a "privacy settings" error: on openrouter.ai → Settings → Privacy, allow free model endpoints. Free providers may use prompts for training, which includes your glasses' photos.
+4. Free models have daily request limits; OpenRouter raises them if you've bought a little credit.
+5. Tap **5. Allow microphone**, and for Look and Video tap **6. Allow photos & videos** and choose **Allow all**. Make sure RDGlass saves imports to the gallery (Photo album → ⚙️).
+6. Add the tiles: **Ask AI**, **AI chat**, **AI look**, **AI video**, **AI answers**.
 
 Answer notifications have 🎙 Ask / 💬 Chat / 👁 Look buttons, so you can start the next one from your watch. Follow-ups within 10 minutes remember the conversation.
 
