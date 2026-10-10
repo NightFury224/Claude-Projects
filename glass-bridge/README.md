@@ -55,6 +55,29 @@ Then:
 
 ---
 
+## AI voice assistant
+Ask a question out loud through the glasses. The answer is **spoken through the glasses**, **shown on your watch**, or both.
+
+**Setup**
+1. Get a key at openrouter.ai → Keys, and add some credit.
+2. In Glass Bridge, under **AI voice assistant**:
+   - Tap **5. Allow microphone**.
+   - Paste the key.
+   - Optionally tap **Browse models…** to pick a model. The default, `openrouter/auto`, lets OpenRouter choose.
+3. Add the **Ask AI** and **AI answers** quick tiles.
+
+**Use**
+1. Tap **Ask AI**: the tile, the 🎙 button on any Glass Bridge notification (also works from the watch), or the button in the app.
+2. Wait for the beep, then speak.
+3. The **AI answers** tile switches between 🔊 Speak, ⌚ Watch, and both.
+
+Follow-up questions within 10 minutes remember the conversation.
+
+**Notes**
+- The glasses' mic is used when they're connected; otherwise the phone's mic is used.
+- Speech recognition uses the phone's built-in Google service.
+- It works over the lock screen.
+
 ## Bluetooth selfie remote (optional)
 Pair the remote with your phone. In Glass Bridge, turn on **Bluetooth remote**. Then **volume-up = video** and **volume-down / enter = photo**.
 
