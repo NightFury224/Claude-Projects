@@ -1,0 +1,48 @@
+name: Build Study Watch (Windows)
+
+on:
+  push:
+    paths:
+      - "study-watch/**"
+      - ".github/workflows/build-study-watch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: study-watch
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build StudyWatch.exe
+        run: pyinstaller --onefile --noconsole --name StudyWatch study_watch.py
+
+      - name: Check the text helpers
+        run: python test_text.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StudyWatch-exe
+          path: study-watch/dist/StudyWatch.exe
+
+      - name: Publish to the "study-watch-latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: study-watch-latest
+          name: Study Watch (latest Windows build)
+          target_commitish: ${{ github.sha }}
+          body: "Download StudyWatch.exe below and run it on your Windows laptop. Built from ${{ github.sha }}."
+          files: study-watch/dist/StudyWatch.exe
+          make_latest: false
