@@ -47,8 +47,11 @@ assert chart["context"].startswith("Income Rs 33,650")
 
 # Memory keeps the last few notes and skips empty or repeated ones.
 app = s.StudyWatch.__new__(s.StudyWatch)
-app.memory = []
+app.memory, app.screens = [], []
 for note in ["a", "", "a", "b", "c", "d", "e"]:
     app.remember(note)
 assert app.recent_notes() == ["b", "c", "d", "e"]
+for shot in ["img1", "img2", "img3"]:
+    app.remember("", shot)
+assert app.recent_images() == ["img2", "img3"]
 print("ok")

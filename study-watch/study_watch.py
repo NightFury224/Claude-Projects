@@ -70,13 +70,15 @@ What is shown must be as small as possible:
 - If there is no question, give the single key idea on screen as the answer.
 
 Memory across screenshots (the user scrolls through question sets):
-- In "context", record any shared material on this screen that later questions might rely on: directions,
-  given totals or constants, every value and label of a chart or table, key facts of a passage, definitions.
-  Copy numbers exactly. Up to about 800 characters. Leave it "" if there is nothing shared.
-- You may be given notes from earlier screens. Use them only when a question here depends on something not
-  visible (e.g. "the chart above", "the passage"). Ignore them when the question stands on its own.
-- If something a question needs is neither on screen nor in the notes, answer "Need: <what>" (e.g.
-  "Need: the chart"). Never answer with a placeholder like "...".
+- In "context", record ALL shared material visible on this screen, not just what today's questions used:
+  every chart, graph, table and diagram (title plus every value and label), directions, given totals or
+  constants, and the key facts of any passage. Later questions may need a chart nobody has used yet.
+  Copy numbers exactly. Label each item ("Chart 2 – Sales by year: 2019 40, 2020 55…"). Be complete but
+  compact, up to about 2500 characters. Leave it "" if there is nothing shared.
+- You may be given notes and screenshots from earlier screens. Use them only when a question here depends on
+  something not visible (e.g. "the chart above", "the passage"). Ignore them when the question stands alone.
+- If something a question needs is nowhere available, answer that question with "Need: <what>"
+  (e.g. "Need: chart 3"). Never answer with a placeholder like "...".
 
 Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
@@ -429,17 +431,21 @@ class Claude:
         # Some thinking models leave "content" empty and put everything in "reasoning".
         return reply.get("content") or reply.get("reasoning") or ""
 
-    def solve(self, image_b64, notes=()):
-        prompt = "Solve it."
+    def solve(self, image_b64, notes=(), earlier_images=()):
+        content = []
         if notes:
-            prompt = ("Notes from earlier screens, oldest first (use only if needed):\n"
-                      + "\n".join(f"- {note}" for note in notes) + "\n\nSolve what is on this screen.")
+            content.append({"type": "text", "text": "Notes from earlier screens, oldest first (use only if needed):\n"
+                            + "\n".join(f"- {note}" for note in notes)})
+        if earlier_images:
+            content.append({"type": "text", "text": f"The {len(earlier_images)} earlier screenshot(s) below are "
+                            "for reference only (charts, tables or passages the questions may need):"})
+            content += [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                        for b64 in earlier_images]
+        content.append({"type": "text", "text": "Solve what is on this screen:" if content else "Solve it."})
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}})
         return self.chat([
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-            ]},
+            {"role": "user", "content": content},
         ], max_tokens=4000)  # room for the private working (and thinking models); only short fields are shown
 
 
@@ -509,6 +515,7 @@ class StudyWatch:
         # Shared material (chart values, directions, passages) from recent screens, so a question
         # further down the page can still use the chart at the top. Text only: cheap and fast.
         self.memory = []  # [(time, note)], newest last
+        self.screens = []  # [(time, jpeg base64)], newest last
         self.status_callback = lambda state: None
         self.stop = threading.Event()
         # The revision log is written by its own thread, after the answer is on its way to the watch.
@@ -531,8 +538,15 @@ class StudyWatch:
                 return
             self.set_status("working")
             started = time.time()
-            result = parse_answer(self.claude.solve(to_jpeg_base64(image), self.recent_notes()))
-            self.remember(result["context"])
+            current = to_jpeg_base64(image)
+            notes, earlier = self.recent_notes(), self.recent_images()
+            result = parse_answer(self.claude.solve(current, notes))
+            if "Need:" in result["answer"] and earlier:
+                # The notes weren't enough (e.g. it needs a chart no earlier question used):
+                # ask again with the last few screenshots themselves.
+                retry = parse_answer(self.claude.solve(current, notes, earlier))
+                result = dict(retry, context=retry["context"] or result["context"])
+            self.remember(result["context"], current)
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
@@ -550,7 +564,8 @@ class StudyWatch:
         finally:
             self.busy.release()
 
-    MEMORY_SIZE = 4
+    MEMORY_SIZE = 4      # text notes of shared material
+    IMAGE_MEMORY = 2     # screenshots kept for the rare retry when notes aren't enough
     MEMORY_MINUTES = 30
 
     def recent_notes(self):
@@ -558,10 +573,21 @@ class StudyWatch:
         self.memory = [(t, note) for t, note in self.memory if t > cutoff]
         return [note for _, note in self.memory]
 
-    def remember(self, note):
+    def recent_images(self):
+        cutoff = time.time() - self.MEMORY_MINUTES * 60
+        self.screens = [(t, b64) for t, b64 in self.screens if t > cutoff]
+        return [b64 for _, b64 in self.screens]
+
+    def remember(self, note, image_b64=None):
         if note and (not self.memory or self.memory[-1][1] != note):
-            self.memory.append((time.time(), note[:1200]))
+            self.memory.append((time.time(), note[:3000]))
             self.memory = self.memory[-self.MEMORY_SIZE:]
+        if image_b64:
+            self.screens = (self.screens + [(time.time(), image_b64)])[-self.IMAGE_MEMORY:]
+
+    def forget(self):
+        self.memory.clear()
+        self.screens.clear()
 
     def send_overview(self):
         s = self.session
@@ -785,7 +811,7 @@ def main():
         pystray.MenuItem(lambda item: f"Ask about screen ({app.config['hotkey_screen']})",
                          lambda icon, item: app.run(region=False)),
         pystray.MenuItem("Send a test to my watch", test_watch),
-        pystray.MenuItem("Forget earlier screens", lambda icon, item: app.memory.clear()),
+        pystray.MenuItem("Forget earlier screens", lambda icon, item: app.forget()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open revision log", open_log),
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),

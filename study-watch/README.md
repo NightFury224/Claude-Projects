@@ -46,12 +46,12 @@ In the **Galaxy Wearable** app on the phone, go to **Watch settings → Notifica
 Tap **Right Ctrl** on its own. The answer arrives on the watch in about 5–15 seconds.
 
 ## Questions that refer to earlier screens
-Question sets often put a chart, table, passage or "Directions" at the top and the questions further down. After every screenshot, the model writes a short note of any shared material on screen: the chart's values, the given total, the passage's key facts. The **last 4 notes from the past 30 minutes** go along with the next screenshot, so you can scroll down and keep asking.
+Question sets often put charts, tables, a passage or "Directions" at the top and the questions further down. Study Watch handles this in two layers:
 
-- The model only uses a note when a question needs it ("the chart above"). Stand-alone questions ignore them.
-- Notes are text, not images, so they add almost no time or cost.
-- If something needed is on neither the screen nor in the notes, the answer says what's missing, e.g. `Need: the chart`. Scroll back up, tap Right Ctrl once on the chart, then carry on.
-- Tray → **Forget earlier screens** clears the notes when you switch topics. They also expire on their own.
+1. **Notes.** After every screenshot, the model writes down *all* shared material on screen: every chart and table with all its values, the directions, the given totals, the key facts of a passage. That includes charts no question has used yet. The last 4 notes from the past 30 minutes go along with the next screenshot. They're text, so they add almost no time.
+2. **Earlier screenshots.** The last 2 screenshots are also kept. If the notes still aren't enough, the app automatically asks again with those screenshots attached. This only happens when needed, and uses one extra request.
+
+The model only uses earlier material when a question depends on it; stand-alone questions ignore it. Tray → **Forget earlier screens** clears everything when you switch topics, and it also expires on its own after 30 minutes.
 
 ## Capture method: GDI or Windows Graphics Capture
 Tray icon → **Use Windows Graphics Capture** switches between the two (or set `"capture"` to `"gdi"` or `"wgc"`).
