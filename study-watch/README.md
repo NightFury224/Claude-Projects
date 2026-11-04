@@ -51,7 +51,11 @@ Question sets often put charts, tables, a passage or "Directions" at the top and
 1. **Notes.** After every screenshot, the model writes down *all* shared material on screen: every chart and table with all its values, the directions, the given totals, the key facts of a passage. That includes charts no question has used yet. The last 4 notes from the past 30 minutes go along with the next screenshot. They're text, so they add almost no time.
 2. **Earlier screenshots.** The last 2 screenshots are also kept. If the notes still aren't enough, the app automatically asks again with those screenshots attached. This only happens when needed, and uses one extra request.
 
-The model only uses earlier material when a question depends on it; stand-alone questions ignore it. Tray → **Forget earlier screens** clears everything when you switch topics, and it also expires on its own after 30 minutes.
+**Keeping unrelated questions separate:**
+- Earlier material is used for a question only if it **explicitly refers** to something off screen ("the chart", "the passage", "as above"), or its number falls in a range the material was given for ("Directions Q1–4" covers Q3).
+- Otherwise the question is solved on its own. Numbers or facts are never borrowed from earlier screens to fill a gap.
+- When earlier material is used, the first step says so (e.g. `Q3: from chart 2 (earlier)`), so you can spot a wrong link at a glance.
+- When a screen is clearly a **different question set or topic**, the old notes and screenshots are dropped automatically. Tray → **Forget earlier screens** clears everything when you switch topics, and it also expires on its own after 30 minutes.
 
 ## Capture method: GDI or Windows Graphics Capture
 Tray icon → **Use Windows Graphics Capture** switches between the two (or set `"capture"` to `"gdi"` or `"wgc"`).

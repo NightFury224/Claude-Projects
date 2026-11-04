@@ -73,16 +73,24 @@ Memory across screenshots (the user scrolls through question sets):
 - In "context", record ALL shared material visible on this screen, not just what today's questions used:
   every chart, graph, table and diagram (title plus every value and label), directions, given totals or
   constants, and the key facts of any passage. Later questions may need a chart nobody has used yet.
-  Copy numbers exactly. Label each item ("Chart 2 – Sales by year: 2019 40, 2020 55…"). Be complete but
-  compact, up to about 2500 characters. Leave it "" if there is nothing shared.
-- You may be given notes and screenshots from earlier screens. Use them only when a question here depends on
-  something not visible (e.g. "the chart above", "the passage"). Ignore them when the question stands alone.
+  Copy numbers exactly. Label each item and say which questions it belongs to when the page says so
+  ("Directions Q1–4, Chart 2 – Sales by year: 2019 40, 2020 55…"). Be complete but compact, up to about
+  2500 characters. Leave it "" if there is nothing shared.
+- You may be given notes and screenshots from earlier screens. They are NOT part of the current question by
+  default. Use earlier material for a question only if (a) the question explicitly refers to something not
+  visible ("the chart", "the table above", "the passage", "the given data", "as above"), or (b) its number
+  falls in a range the material was given for ("Directions Q1–4" covers Q3). Otherwise solve the question
+  on its own and never borrow numbers, names or facts from earlier material, even if that would fill a gap.
+- When you do use earlier material, make the first step say so, e.g. "Q3: from chart 2 (earlier)".
+- Set "new_set" to true when this screen is clearly a different question set or topic from the earlier
+  notes (different directions, subject or chapter), so the old notes are dropped; otherwise false.
 - If something a question needs is nowhere available, answer that question with "Need: <what>"
   (e.g. "Need: chart 3"). Never answer with a placeholder like "...".
 
 Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
- "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>"}"""
+ "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
+ "new_set": false}"""
 
 
 # ---------------------------------------------------------------- settings
@@ -162,6 +170,7 @@ def parse_answer(raw):
             "answer": real_answer(to_watch_text(str(data.get("answer") or (steps[0] if steps else "")))),
             "steps": [step for step in steps if not is_placeholder(step)],
             "context": str(data.get("context") or "").strip(),
+            "new_set": data.get("new_set") is True,
         }
     # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
     fields = {key: re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
@@ -175,10 +184,12 @@ def parse_answer(raw):
             "answer": real_answer(clean(fields["answer"].group(1))),
             "steps": [clean(step) for step in steps if step.strip() and not is_placeholder(step)],
             "context": fields["context"].group(1).strip() if fields["context"] else "",
+            "new_set": bool(re.search(r'"new_set"\s*:\s*true', raw)),
         }
     log_error("Couldn't read the model's reply:\n" + raw)
     text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
-    return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": ""}
+    return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": "",
+            "new_set": False}
 
 
 def is_placeholder(text):
@@ -541,11 +552,13 @@ class StudyWatch:
             current = to_jpeg_base64(image)
             notes, earlier = self.recent_notes(), self.recent_images()
             result = parse_answer(self.claude.solve(current, notes))
-            if "Need:" in result["answer"] and earlier:
+            if "Need:" in result["answer"] and earlier and not result["new_set"]:
                 # The notes weren't enough (e.g. it needs a chart no earlier question used):
                 # ask again with the last few screenshots themselves.
                 retry = parse_answer(self.claude.solve(current, notes, earlier))
                 result = dict(retry, context=retry["context"] or result["context"])
+            if result["new_set"]:
+                self.forget()  # a different question set: old charts and passages must not leak in
             self.remember(result["context"], current)
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"

@@ -6,7 +6,8 @@ assert s.to_watch_text(r"\frac{1}{\sqrt{x+1}}") == "(1)/(√(x+1))"
 assert s.to_watch_text("a_1 and **bold**") == "a₁ and bold"
 
 parsed = s.parse_answer('```json\n{"question": "Solve x^2=4", "answer": "x = ±2", "steps": ["a", "b"]}\n```')
-assert parsed == {"question": "Solve x²=4", "answer": "x = ±2", "steps": ["a", "b"], "context": ""}
+assert parsed == {"question": "Solve x²=4", "answer": "x = ±2", "steps": ["a", "b"], "context": "",
+                  "new_set": False}
 assert s.parse_answer("No JSON here.")["steps"] == ["No JSON here."]
 assert all(len(p) <= s.NTFY_LIMIT for p in s.split_text("word " * 2000, s.NTFY_LIMIT))
 # The model corrected itself: the last complete JSON object wins.
@@ -43,7 +44,8 @@ stuck = s.parse_answer('{"work": "no chart", "question": "Q2–Q4", "answer": ".
 assert stuck["answer"].startswith("No answer") and stuck["steps"] == []
 chart = s.parse_answer('{"question": "Pie chart Q1", "answer": "C) Rs. 6057", "steps": [], '
                        '"context": "Income Rs 33,650. Food 25%, Rent 18%, PF 12%"}')
-assert chart["context"].startswith("Income Rs 33,650")
+assert chart["context"].startswith("Income Rs 33,650") and chart["new_set"] is False
+assert s.parse_answer('{"answer": "B) 3", "context": "", "new_set": true}')["new_set"] is True
 
 # Memory keeps the last few notes and skips empty or repeated ones.
 app = s.StudyWatch.__new__(s.StudyWatch)
