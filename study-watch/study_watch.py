@@ -126,19 +126,24 @@ def to_watch_text(text):
 
 
 def parse_answer(raw):
-    """The model is asked for JSON; accept it inside code fences too, and fall back to plain text."""
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
+    """The model is asked for JSON. If it corrects itself and sends more than one JSON object, the last
+    complete one wins. Code fences are fine; plain text is the fallback."""
+    data = None
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", raw):
         try:
-            data = json.loads(match.group(0))
-            steps = [to_watch_text(str(s)) for s in data.get("steps") or [] if str(s).strip()]
-            return {
-                "question": to_watch_text(str(data.get("question") or "Your question")),
-                "answer": to_watch_text(str(data.get("answer") or (steps[0] if steps else ""))),
-                "steps": steps,
-            }
-        except (json.JSONDecodeError, AttributeError):
-            pass
+            candidate, _ = decoder.raw_decode(raw, match.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and "answer" in candidate:
+            data = candidate
+    if data is not None:
+        steps = [to_watch_text(str(s)) for s in data.get("steps") or [] if str(s).strip()]
+        return {
+            "question": to_watch_text(str(data.get("question") or "Your question")),
+            "answer": to_watch_text(str(data.get("answer") or (steps[0] if steps else ""))),
+            "steps": steps,
+        }
     text = to_watch_text(raw)
     return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400)}
 
