@@ -15,4 +15,12 @@ corrected = ('{"question": "Avg", "answer": "B) 21", "steps": ["x"]} Wait, check
 assert s.parse_answer(corrected)["answer"] == "C) 28"
 # A cut-off second object falls back to the first complete one.
 assert s.parse_answer('{"answer": "C) 28", "steps": []} {"answer": "C) 2')["answer"] == "C) 28"
+# Raw line breaks inside strings (what Claude sent for a two-question screen).
+two = ('{"work":"Q2: T+F=81, W=39. Q3: 27.","question":"Q2\nQ3: averages",'
+       '"answer":"Q2: A) 39°C · Q3: B) 27","steps":["Q2: T+F = 81","Q3: middle = 27"]}')
+assert s.parse_answer(two)["answer"] == "Q2: A) 39°C · Q3: B) 27"
+# An unescaped quote breaks JSON; fields are still recovered and "work" is never shown.
+broken = '{"work": "12" ruler", "question": "Length", "answer": "C) 12 in", "steps": ["read scale"]}'
+parsed = s.parse_answer(broken)
+assert parsed["answer"] == "C) 12 in" and parsed["steps"] == ["read scale"], parsed
 print("ok")

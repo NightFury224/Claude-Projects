@@ -91,6 +91,7 @@ def save_config(config):
 
 
 def log_error(text):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with ERROR_LOG.open("a", encoding="utf-8") as f:
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {text}\n")
 
@@ -132,7 +133,7 @@ def parse_answer(raw):
     """The model is asked for JSON. If it corrects itself and sends more than one JSON object, the last
     complete one wins. Code fences are fine; plain text is the fallback."""
     data = None
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(strict=False)  # tolerate raw line breaks inside strings
     for match in re.finditer(r"\{", raw):
         try:
             candidate, _ = decoder.raw_decode(raw, match.start())
@@ -147,7 +148,20 @@ def parse_answer(raw):
             "answer": to_watch_text(str(data.get("answer") or (steps[0] if steps else ""))),
             "steps": steps,
         }
-    text = to_watch_text(raw)
+    # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
+    fields = {key: re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
+              for key in ("question", "answer")}
+    if fields["answer"]:
+        steps_block = re.search(r'"steps"\s*:\s*\[(.*?)\]', raw, re.DOTALL)
+        steps = re.findall(r'"((?:[^"\\]|\\.)*)"', steps_block.group(1)) if steps_block else []
+        clean = lambda t: to_watch_text(t.replace('\\"', '"').replace("\\n", " "))
+        return {
+            "question": clean(fields["question"].group(1)) if fields["question"] else "Your question",
+            "answer": clean(fields["answer"].group(1)),
+            "steps": [clean(step) for step in steps if step.strip()],
+        }
+    log_error("Couldn't read the model's reply:\n" + raw)
+    text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
     return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400)}
 
 
