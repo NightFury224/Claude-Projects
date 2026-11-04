@@ -45,6 +45,14 @@ In the **Galaxy Wearable** app on the phone, go to **Watch settings → Notifica
 ### 4. Use it
 Tap **Right Ctrl** on its own. The answer arrives on the watch in about 5–15 seconds.
 
+## Questions that refer to earlier screens
+Question sets often put a chart, table, passage or "Directions" at the top and the questions further down. After every screenshot, the model writes a short note of any shared material on screen: the chart's values, the given total, the passage's key facts. The **last 4 notes from the past 30 minutes** go along with the next screenshot, so you can scroll down and keep asking.
+
+- The model only uses a note when a question needs it ("the chart above"). Stand-alone questions ignore them.
+- Notes are text, not images, so they add almost no time or cost.
+- If something needed is on neither the screen nor in the notes, the answer says what's missing, e.g. `Need: the chart`. Scroll back up, tap Right Ctrl once on the chart, then carry on.
+- Tray → **Forget earlier screens** clears the notes when you switch topics. They also expire on their own.
+
 ## Capture method: GDI or Windows Graphics Capture
 Tray icon → **Use Windows Graphics Capture** switches between the two (or set `"capture"` to `"gdi"` or `"wgc"`).
 

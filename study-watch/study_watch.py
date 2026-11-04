@@ -69,8 +69,18 @@ What is shown must be as small as possible:
   Questions about code that have a short answer (its output, the bug's line, the complexity) are fine.
 - If there is no question, give the single key idea on screen as the answer.
 
-Reply with JSON only, with "work" first:
-{"work": "...", "question": "topic in under 40 characters", "answer": "...", "steps": []}"""
+Memory across screenshots (the user scrolls through question sets):
+- In "context", record any shared material on this screen that later questions might rely on: directions,
+  given totals or constants, every value and label of a chart or table, key facts of a passage, definitions.
+  Copy numbers exactly. Up to about 800 characters. Leave it "" if there is nothing shared.
+- You may be given notes from earlier screens. Use them only when a question here depends on something not
+  visible (e.g. "the chart above", "the passage"). Ignore them when the question stands on its own.
+- If something a question needs is neither on screen nor in the notes, answer "Need: <what>" (e.g.
+  "Need: the chart"). Never answer with a placeholder like "...".
+
+Reply with JSON only, "work" first:
+{"work": "<private working and check>", "question": "<topic, under 40 characters>",
+ "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>"}"""
 
 
 # ---------------------------------------------------------------- settings
@@ -147,24 +157,35 @@ def parse_answer(raw):
         steps = [to_watch_text(str(s)) for s in data.get("steps") or [] if str(s).strip()]
         return {
             "question": to_watch_text(str(data.get("question") or "Your question")),
-            "answer": to_watch_text(str(data.get("answer") or (steps[0] if steps else ""))),
-            "steps": steps,
+            "answer": real_answer(to_watch_text(str(data.get("answer") or (steps[0] if steps else "")))),
+            "steps": [step for step in steps if not is_placeholder(step)],
+            "context": str(data.get("context") or "").strip(),
         }
     # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
     fields = {key: re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-              for key in ("question", "answer")}
+              for key in ("question", "answer", "context")}
     if fields["answer"]:
         steps_block = re.search(r'"steps"\s*:\s*\[(.*?)\]', raw, re.DOTALL)
         steps = re.findall(r'"((?:[^"\\]|\\.)*)"', steps_block.group(1)) if steps_block else []
         clean = lambda t: to_watch_text(t.replace('\\"', '"').replace("\\n", " "))
         return {
             "question": clean(fields["question"].group(1)) if fields["question"] else "Your question",
-            "answer": clean(fields["answer"].group(1)),
-            "steps": [clean(step) for step in steps if step.strip()],
+            "answer": real_answer(clean(fields["answer"].group(1))),
+            "steps": [clean(step) for step in steps if step.strip() and not is_placeholder(step)],
+            "context": fields["context"].group(1).strip() if fields["context"] else "",
         }
     log_error("Couldn't read the model's reply:\n" + raw)
     text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
-    return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400)}
+    return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": ""}
+
+
+def is_placeholder(text):
+    return not re.sub(r"[.…\s·<>-]", "", text)
+
+
+def real_answer(answer):
+    """A model that is stuck sometimes returns "..." as the answer; say so instead of showing dots."""
+    return "No answer: the model couldn't work it out. Try again." if is_placeholder(answer) else answer
 
 
 def split_text(text, size):
@@ -408,11 +429,15 @@ class Claude:
         # Some thinking models leave "content" empty and put everything in "reasoning".
         return reply.get("content") or reply.get("reasoning") or ""
 
-    def solve(self, image_b64):
+    def solve(self, image_b64, notes=()):
+        prompt = "Solve it."
+        if notes:
+            prompt = ("Notes from earlier screens, oldest first (use only if needed):\n"
+                      + "\n".join(f"- {note}" for note in notes) + "\n\nSolve what is on this screen.")
         return self.chat([
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": [
-                {"type": "text", "text": "Solve it."},
+                {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
             ]},
         ], max_tokens=4000)  # room for the private working (and thinking models); only short fields are shown
@@ -481,6 +506,9 @@ class StudyWatch:
         self.watch = Watch(self.config)
         self.busy = threading.Lock()
         self.session = None  # {"id", "question", "answer", "steps", "next", "log"}
+        # Shared material (chart values, directions, passages) from recent screens, so a question
+        # further down the page can still use the chart at the top. Text only: cheap and fast.
+        self.memory = []  # [(time, note)], newest last
         self.status_callback = lambda state: None
         self.stop = threading.Event()
         # The revision log is written by its own thread, after the answer is on its way to the watch.
@@ -503,7 +531,8 @@ class StudyWatch:
                 return
             self.set_status("working")
             started = time.time()
-            result = parse_answer(self.claude.solve(to_jpeg_base64(image)))
+            result = parse_answer(self.claude.solve(to_jpeg_base64(image), self.recent_notes()))
+            self.remember(result["context"])
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
@@ -520,6 +549,19 @@ class StudyWatch:
                 pass
         finally:
             self.busy.release()
+
+    MEMORY_SIZE = 4
+    MEMORY_MINUTES = 30
+
+    def recent_notes(self):
+        cutoff = time.time() - self.MEMORY_MINUTES * 60
+        self.memory = [(t, note) for t, note in self.memory if t > cutoff]
+        return [note for _, note in self.memory]
+
+    def remember(self, note):
+        if note and (not self.memory or self.memory[-1][1] != note):
+            self.memory.append((time.time(), note[:1200]))
+            self.memory = self.memory[-self.MEMORY_SIZE:]
 
     def send_overview(self):
         s = self.session
@@ -743,6 +785,7 @@ def main():
         pystray.MenuItem(lambda item: f"Ask about screen ({app.config['hotkey_screen']})",
                          lambda icon, item: app.run(region=False)),
         pystray.MenuItem("Send a test to my watch", test_watch),
+        pystray.MenuItem("Forget earlier screens", lambda icon, item: app.memory.clear()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open revision log", open_log),
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),
