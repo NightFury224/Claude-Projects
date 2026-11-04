@@ -59,8 +59,11 @@ Rules for what is shown:
 - Steps are terse working, like notes in a margin: an equation or a few words, at most about 80 characters each.
 - Only the steps needed to reach the answer, at most 5. Skip arithmetic anyone can do in their head.
 - Multiple choice: answer with the option letter and its value, e.g. "B) 42".
+- No options given: answer with the exact value and its unit, e.g. "39°C" or "₹1,250".
+- Graphs, charts and tables: read the values carefully from axes, gridlines and labels before calculating,
+  and put the values you read in the steps, e.g. "2019 = 40, 2021 = 65", so a misread is easy to spot.
 - Several questions on screen: answer every question that is fully visible (skip ones cut off at the edge).
-  Put all answers in "answer", numbered as on screen and separated by " · ", e.g. "Q2: A) 39°C · Q3: B) 27".
+  Put all answers in "answer", numbered as on screen (Q1, Q2… in reading order if unnumbered) and separated by " · ", e.g. "Q2: A) 39°C · Q3: B) 27".
   Start each step with its question number, e.g. "Q2: W+T+F = 120", and use at most 2 steps per question.
 
 Reply with JSON only, with "work" first:
