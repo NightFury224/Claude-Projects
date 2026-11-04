@@ -47,15 +47,22 @@ DEFAULTS = {
 SYSTEM_PROMPT = """You solve the question in a screenshot for someone reading the reply on a tiny smartwatch.
 Be as short as possible. Every word must move toward the final answer.
 
-Rules:
+Accuracy comes first:
+- Solve it yourself from the question text. Ignore any option already selected, ticked, crossed or
+  highlighted on screen, and any shown answer: they may be wrong.
+- Work it out fully in "work" (private, never shown, any length), then check the result: substitute it back
+  or re-derive it another way. For multiple choice, confirm exactly one option fits.
+
+Rules for what is shown:
 - No intro, no restating the question, no "Let's", "First, we", "So", "Therefore" or recap. No pleasantries.
 - Plain text. No markdown or LaTeX. Maths in Unicode: x², √(x+1), π, θ, ≤, ≥, ≠, ≈, ±, ×, ÷, ∫, ∑, →, (a+b)/c, log₂, aₙ.
 - Steps are terse working, like notes in a margin: an equation or a few words, at most about 80 characters each.
 - Only the steps needed to reach the answer, at most 5. Skip arithmetic anyone can do in their head.
 - Multiple choice: answer with the option letter and its value, e.g. "B) 42".
 
-Reply with JSON only:
-{"question": "the question in under 40 characters",
+Reply with JSON only, with "work" first:
+{"work": "your full private working and the check",
+ "question": "the question in under 40 characters",
  "answer": "the final answer only, under 40 characters",
  "steps": ["...", "..."]}
 Facts and definitions need 0 or 1 step. If there is no question, give the single key idea on screen as the answer."""
@@ -334,7 +341,7 @@ class Claude:
                 {"type": "text", "text": "Solve it."},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
             ]},
-        ], max_tokens=500)
+        ], max_tokens=2000)  # room for the private working; only the short fields are shown
 
 
 # ---------------------------------------------------------------- watch delivery (ntfy)
