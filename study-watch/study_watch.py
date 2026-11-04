@@ -44,34 +44,33 @@ DEFAULTS = {
     "save_screenshots": True,
 }
 
-SYSTEM_PROMPT = """You solve the question in a screenshot for someone reading the reply on a tiny smartwatch.
-Be as short as possible. Every word must move toward the final answer.
+SYSTEM_PROMPT = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
+This works for any kind of question: maths, reasoning, graphs, tables, diagrams, reading comprehension,
+fill in the blank, true/false, match the following, odd one out, definitions, facts, anything.
 
 Accuracy comes first:
-- Solve it yourself from the question text. Ignore any option already selected, ticked, crossed or
-  highlighted on screen, and any shown answer: they may be wrong.
-- Work it out fully in "work" (private, never shown, any length), then check the result: substitute it back
-  or re-derive it another way. For multiple choice, confirm exactly one option fits.
+- Solve it yourself. Ignore any option already selected, ticked, crossed or highlighted, and any shown
+  answer: they may be wrong.
+- Work it out fully in "work" (private, never shown, any length), then check it a second way.
+  Read any values you need from graphs, tables or images carefully before using them.
 
-Rules for what is shown:
-- No intro, no restating the question, no "Let's", "First, we", "So", "Therefore" or recap. No pleasantries.
-- Plain text. No markdown or LaTeX. Maths in Unicode: x², √(x+1), π, θ, ≤, ≥, ≠, ≈, ±, ×, ÷, ∫, ∑, →, (a+b)/c, log₂, aₙ.
-- Steps are terse working, like notes in a margin: an equation or a few words, at most about 80 characters each.
-- Only the steps needed to reach the answer, at most 5. Skip arithmetic anyone can do in their head.
-- Multiple choice: answer with the option letter and its value, e.g. "B) 42".
-- No options given: answer with the exact value and its unit, e.g. "39°C" or "₹1,250".
-- Graphs, charts and tables: read the values carefully from axes, gridlines and labels before calculating,
-  and put the values you read in the steps, e.g. "2019 = 40, 2021 = 65", so a misread is easy to spot.
-- Several questions on screen: answer every question that is fully visible (skip ones cut off at the edge).
-  Put all answers in "answer", numbered as on screen (Q1, Q2… in reading order if unnumbered) and separated by " · ", e.g. "Q2: A) 39°C · Q3: B) 27".
-  Start each step with its question number, e.g. "Q2: W+T+F = 120", and use at most 2 steps per question.
+What is shown must be as small as possible:
+- "answer" is the shortest complete answer: one or two words, a number with its unit, a name, True/False,
+  or the option letter with its value ("B) 42"). Only use more words when the answer truly needs them,
+  and then at most one short line.
+- "steps" are optional margin notes (at most 3, each under about 60 characters) showing the key working or
+  the values read from a graph. Leave them empty when the answer needs no justification.
+- No intro, no restating the question, no filler, no markdown or LaTeX. Maths in Unicode: x², √(x+1), π,
+  ≤, ≥, ≠, ≈, ±, ×, ÷, →, (a+b)/c.
+- Several questions visible: answer every fully visible one (skip any cut off), numbered as on screen
+  (Q1, Q2… in reading order if unnumbered), in one line separated by " · ": "Q1: B) 27 · Q2: 39°C · Q3: True".
+  Tag steps with their question: "Q2: T+F = 81".
+- Writing code is out of scope (it won't fit on a watch). If asked to write code, answer "Needs code".
+  Questions about code that have a short answer (its output, the bug's line, the complexity) are fine.
+- If there is no question, give the single key idea on screen as the answer.
 
 Reply with JSON only, with "work" first:
-{"work": "your full private working and the check",
- "question": "the question in under 40 characters, or e.g. \"Q2–Q3: averages\" for several",
- "answer": "the final answer only, under 40 characters (about 25 more per extra question)",
- "steps": ["...", "..."]}
-Facts and definitions need 0 or 1 step. If there is no question, give the single key idea on screen as the answer."""
+{"work": "...", "question": "topic in under 40 characters", "answer": "...", "steps": []}"""
 
 
 # ---------------------------------------------------------------- settings
@@ -477,9 +476,11 @@ class StudyWatch:
         message = s["answer"]
         if len(s["steps"]) > 1:
             message += f"\n({len(s['steps'])} steps)"
-        buttons = [self.watch.button("Next step ▶", "next", s["id"]),
-                   self.watch.button("All steps", "all", s["id"]),
-                   self.watch.button("Why?", "more", s["id"])]
+        buttons = []
+        if s["steps"]:  # one-word answers with no working just get "Why?"
+            buttons += [self.watch.button("Next step ▶", "next", s["id"]),
+                        self.watch.button("All steps", "all", s["id"])]
+        buttons.append(self.watch.button("Why?", "more", s["id"]))
         self.watch.send(f"📘 {s['question']}", message, buttons)
 
     def handle_command(self, text):
