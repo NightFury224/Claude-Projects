@@ -1,9 +1,9 @@
 # Study Watch
 
-Press a hotkey on your Windows laptop. Claude reads your screen and the answer arrives on your Galaxy Watch, step by step. Every question and answer is also saved to a revision log on the laptop.
+Press a hotkey on your Windows laptop. An AI model reads your screen and the answer arrives on your Galaxy Watch, step by step. Every question and answer is also saved to a revision log on the laptop.
 
 ```
-Right Ctrl → screenshot → Claude (OpenRouter) → ntfy → phone → Galaxy Watch
+Right Ctrl → screenshot → free AI model (OpenRouter) → ntfy → phone → Galaxy Watch
                                         └→ revision log (Documents\StudyWatch)
 ```
 
@@ -35,7 +35,8 @@ In the **Galaxy Wearable** app on the phone, go to **Watch settings → Notifica
 1. Download **StudyWatch.exe** from this repo's Releases → **Study Watch (latest Windows build)**.
 2. Run it. If Windows SmartScreen warns about an unknown app, click **More info → Run anyway**.
 3. The first time, `config.json` opens in Notepad:
-   - Paste your OpenRouter key into `"openrouter_key"`. Get one at openrouter.ai → Keys. Claude is a paid model, so add a little credit; each question costs roughly ₹1–3.
+   - Paste your OpenRouter key into `"openrouter_key"`. Get one at openrouter.ai → Keys. By default Study Watch uses **free** models, so no credit is needed.
+   - On openrouter.ai → Settings → **Privacy**, allow free model endpoints. Free providers may log prompts, screenshots included.
    - Copy the `"ntfy_topic"` value (`studywatch-…`). In the ntfy phone app, tap **+** and subscribe to exactly that topic.
    - Save, then right-click the tray icon → **Reload settings**.
 4. Right-click the tray icon → **Send a test to my watch**. A "✅ Study Watch connected" notification should appear on the watch.
@@ -79,11 +80,15 @@ Optional: set `hotkey_region` (e.g. `ctrl+shift+alt+space`) to also be able to d
 | `hotkey_screen` | `right ctrl` | Whole-screen hotkey (a lone modifier fires when tapped by itself) |
 | `hotkey_region` | `""` (off) | Optional drag-a-box hotkey |
 | `capture` | `gdi` | `gdi` or `wgc` (see above) |
-| `model` | `auto` | `auto` picks OpenRouter's newest Claude Sonnet. You can also give an id, e.g. `anthropic/claude-opus-…`, for harder maths. |
+| `model` | `auto` | `auto` uses the best **free** image models, falling back to the next if one is busy. `claude` uses the newest Claude Sonnet (needs credit, most accurate). Or give any OpenRouter model id. |
 | `ntfy_server` / `ntfy_token` | `https://ntfy.sh` / empty | For your own ntfy server, or an ntfy.sh account with a reserved topic |
 | `save_screenshots` | `true` | Keep screenshots in the revision log |
 
 After editing, use tray → **Reload settings**.
+
+## Free models: limits
+- Without any credit, OpenRouter allows about **50 free requests a day**. Each answer is one request, and so is each **Why?**. Buying $10 of credit once raises this to about 1,000 a day, and free models still cost nothing.
+- Free models are a little less accurate than Claude, but they still work each answer out privately and check it. If a hard question comes back wrong, set `"model": "claude"` for that study session.
 
 ## Privacy
 - Screenshots go to OpenRouter and on to Anthropic.

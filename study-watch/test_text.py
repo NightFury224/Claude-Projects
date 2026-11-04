@@ -23,4 +23,18 @@ assert s.parse_answer(two)["answer"] == "Q2: A) 39°C · Q3: B) 27"
 broken = '{"work": "12" ruler", "question": "Length", "answer": "C) 12 in", "steps": ["read scale"]}'
 parsed = s.parse_answer(broken)
 assert parsed["answer"] == "C) 12 in" and parsed["steps"] == ["read scale"], parsed
+# Free image models are ranked best first; paid and text-only models are left out.
+models = [
+    {"id": "google/gemma-3-4b-it:free", "pricing": {"prompt": "0", "completion": "0"},
+     "architecture": {"input_modalities": ["text", "image"]}},
+    {"id": "qwen/qwen2.5-vl-72b-instruct:free", "pricing": {"prompt": "0", "completion": "0"},
+     "architecture": {"input_modalities": ["text", "image"]}},
+    {"id": "openai/gpt-5", "pricing": {"prompt": "0.00001", "completion": "0.00003"},
+     "architecture": {"input_modalities": ["text", "image"]}},
+    {"id": "deepseek/deepseek-r1:free", "pricing": {"prompt": "0", "completion": "0"},
+     "architecture": {"input_modalities": ["text"]}},
+]
+ai = s.Claude({"model": "auto"})
+s.requests.get = lambda *a, **k: type("R", (), {"json": lambda self: {"data": models}})()
+assert ai.models() == ["qwen/qwen2.5-vl-72b-instruct:free", "google/gemma-3-4b-it:free"], ai.models()
 print("ok")

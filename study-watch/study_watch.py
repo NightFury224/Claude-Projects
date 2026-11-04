@@ -317,33 +317,76 @@ def to_jpeg_base64(image, max_side=1600):
 # ---------------------------------------------------------------- OpenRouter
 
 class Claude:
+    """OpenRouter client. By default it uses the best *free* models that can read images, with automatic
+    fallback to the next one when a model is busy or rate-limited."""
+
+    FREE = "auto"       # best free image models (default, costs nothing)
+    PAID = "claude"     # newest Claude Sonnet (needs OpenRouter credit)
+
+    # Rough capability ranking for free image models: strong families first, then bigger models.
+    FAMILIES = [
+        ("google/gemini", 100), ("qwen/qwen3-vl", 92), ("meta-llama/llama-4-maverick", 88),
+        ("qwen/qwen2.5-vl-72b", 85), ("moonshotai/kimi-vl", 80), ("meta-llama/llama-4-scout", 78),
+        ("mistralai/mistral-medium", 76), ("mistralai/mistral-small-3", 72), ("qwen/qwen2.5-vl", 68),
+        ("google/gemma-3", 64), ("nvidia/", 60), ("meta-llama/llama-3.2-90b-vision", 58),
+    ]
+
     def __init__(self, config):
         self.config = config
-        self._model = None
+        self._models = None
+        self._fetched = 0.0
 
-    def model(self):
-        """'auto' picks OpenRouter's newest Claude Sonnet, so the app keeps up with new releases."""
-        chosen = self.config.get("model", "auto").strip()
-        if chosen and chosen != "auto":
-            return chosen
-        if self._model is None:
-            try:
-                data = requests.get(f"{OPENROUTER}/models", timeout=15).json()["data"]
+    @classmethod
+    def quality(cls, model):
+        lower = model["id"].lower()
+        score = next((s for prefix, s in cls.FAMILIES if lower.startswith(prefix)), 50)
+        size = re.search(r"(\d+)b\b", lower)
+        if size:
+            billions = int(size.group(1))
+            score += -40 if billions < 8 else -10 if billions < 20 else min(billions // 10, 10)
+        if "reasoning" in (model.get("supported_parameters") or []):
+            score += 5  # models that can think are better at maths and logic
+        return score
+
+    @staticmethod
+    def is_free(model):
+        pricing = model.get("pricing") or {}
+        try:
+            return model["id"].endswith(":free") or (
+                float(pricing.get("prompt", 1)) == 0 and float(pricing.get("completion", 1)) == 0)
+        except (TypeError, ValueError):
+            return False
+
+    def models(self):
+        """The models to try, best first. OpenRouter moves on to the next if one fails."""
+        chosen = self.config.get("model", self.FREE).strip() or self.FREE
+        if chosen not in (self.FREE, self.PAID, "auto-free"):
+            return [chosen]
+        if self._models is None or time.time() - self._fetched > 6 * 3600:  # free models come and go
+            self._fetched = time.time()
+            data = requests.get(f"{OPENROUTER}/models", timeout=15).json()["data"]
+            if chosen == self.PAID:
                 sonnets = [m for m in data if m["id"].startswith("anthropic/claude-sonnet")
                            and not m["id"].endswith(":beta")]
-                self._model = max(sonnets, key=lambda m: m.get("created", 0))["id"] if sonnets else FALLBACK_MODEL
-            except (requests.RequestException, KeyError, ValueError):
-                return FALLBACK_MODEL
-        return self._model
+                self._models = [max(sonnets, key=lambda m: m.get("created", 0))["id"]] if sonnets \
+                    else [FALLBACK_MODEL]
+            else:
+                vision = [m for m in data if self.is_free(m) and "image" in
+                          ((m.get("architecture") or {}).get("input_modalities") or [])]
+                self._models = [m["id"] for m in sorted(vision, key=self.quality, reverse=True)][:3]
+                if not self._models:
+                    raise RuntimeError("OpenRouter has no free image models right now. Try again later.")
+        return self._models
 
     def chat(self, messages, max_tokens=1500):
         key = self.config.get("openrouter_key", "").strip()
         if not key:
             raise RuntimeError("Add your OpenRouter key: tray icon → Settings")
+        models = self.models()
         response = requests.post(
             f"{OPENROUTER}/chat/completions",
             headers={"Authorization": f"Bearer {key}", "X-Title": APP},
-            json={"model": self.model(), "messages": messages, "max_tokens": max_tokens},
+            json={"model": models[0], "models": models, "messages": messages, "max_tokens": max_tokens},
             timeout=120,
         )
         if response.status_code != 200:
@@ -353,10 +396,17 @@ class Claude:
                 message = f"HTTP {response.status_code}"
             if response.status_code == 401:
                 message = "OpenRouter rejected the key. Check it in Settings."
+            elif "data policy" in message.lower() or "privacy" in message.lower():
+                message = ("Free models are blocked by your OpenRouter privacy settings. On openrouter.ai → "
+                           "Settings → Privacy, allow free endpoints.")
+            elif response.status_code == 429:
+                message = "Free-model limit reached. Try again in a minute, or tomorrow for the daily limit."
             elif response.status_code == 402:
-                message = "OpenRouter needs credit on your account for Claude."
+                message = "OpenRouter says this needs credit. Set \"model\" to \"auto\" for free models."
             raise RuntimeError(message)
-        return response.json()["choices"][0]["message"]["content"] or ""
+        reply = response.json()["choices"][0]["message"]
+        # Some thinking models leave "content" empty and put everything in "reasoning".
+        return reply.get("content") or reply.get("reasoning") or ""
 
     def solve(self, image_b64):
         return self.chat([
@@ -365,7 +415,7 @@ class Claude:
                 {"type": "text", "text": "Solve it."},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
             ]},
-        ], max_tokens=2000)  # room for the private working; only the short fields are shown
+        ], max_tokens=4000)  # room for the private working (and thinking models); only short fields are shown
 
 
 # ---------------------------------------------------------------- watch delivery (ntfy)
@@ -658,7 +708,7 @@ def main():
         try:
             app.config.clear()
             app.config.update(load_config())
-            app.claude._model = None
+            app.claude._models = None
             register_hotkeys()
             icon.icon = icons["idle"]
         except Exception:  # noqa: BLE001
