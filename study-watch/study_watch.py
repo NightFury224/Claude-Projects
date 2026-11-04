@@ -68,7 +68,9 @@ What is shown must be as small as possible:
   Tag steps with their question: "Q2: T+F = 81".
 - Writing code is out of scope (it won't fit on a watch). If asked to write code, answer "Needs code".
   Questions about code that have a short answer (its output, the bug's line, the complexity) are fine.
-- If there is no question, give the single key idea on screen as the answer.
+- If there is no question but the screen has shared material (charts, tables, directions, a passage), answer
+  "Saved: <what>", e.g. "Saved: 2 pie charts (1990–91, 1991–92)". If there is nothing like that either,
+  give the single key idea on screen as the answer.
 
 Memory across screenshots (the user scrolls through question sets):
 - In "context", record ALL shared material visible on this screen, not just what today's questions used:
@@ -187,6 +189,7 @@ def parse_answer(raw):
             "steps": [step for step in steps if not is_placeholder(step)],
             "context": str(data.get("context") or "").strip(),
             "new_set": data.get("new_set") is True,
+            "ok": True,
         }
     # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
     fields = {key: re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
@@ -201,11 +204,12 @@ def parse_answer(raw):
             "steps": [clean(step) for step in steps if step.strip() and not is_placeholder(step)],
             "context": fields["context"].group(1).strip() if fields["context"] else "",
             "new_set": bool(re.search(r'"new_set"\s*:\s*true', raw)),
+            "ok": True,
         }
     log_error("Couldn't read the model's reply:\n" + raw)
     text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
     return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": "",
-            "new_set": False}
+            "new_set": False, "ok": False}
 
 
 def is_placeholder(text):
@@ -428,15 +432,18 @@ class Claude:
                     raise RuntimeError("OpenRouter has no free image models right now. Try again later.")
         return self._models
 
-    def chat(self, messages, max_tokens=1500):
+    def chat(self, messages, max_tokens=1500, skip=0):
+        """skip=1 starts from the second-best model, used to retry when the first gave an unusable reply."""
         key = self.config.get("openrouter_key", "").strip()
         if not key:
             raise RuntimeError("Add your OpenRouter key: tray icon → Settings")
-        models = self.models()
+        models = self.models()[skip:] or self.models()
         response = requests.post(
             f"{OPENROUTER}/chat/completions",
             headers={"Authorization": f"Bearer {key}", "X-Title": APP},
-            json={"model": models[0], "models": models, "messages": messages, "max_tokens": max_tokens},
+            # Thinking models: moderate effort, and keep their thoughts out of the reply.
+            json={"model": models[0], "models": models, "messages": messages, "max_tokens": max_tokens,
+                  "reasoning": {"effort": "medium", "exclude": True}},
             timeout=120,
         )
         if response.status_code != 200:
@@ -454,11 +461,11 @@ class Claude:
             elif response.status_code == 402:
                 message = "OpenRouter says this needs credit. Set \"model\" to \"auto\" for free models."
             raise RuntimeError(message)
-        reply = response.json()["choices"][0]["message"]
-        # Some thinking models leave "content" empty and put everything in "reasoning".
-        return reply.get("content") or reply.get("reasoning") or ""
+        # Only the final reply. A thinking model's raw thoughts ("reasoning") must never reach the watch;
+        # if it ran out of room before replying, the caller retries with another model.
+        return response.json()["choices"][0]["message"].get("content") or ""
 
-    def solve(self, image_b64, notes=(), earlier_images=()):
+    def solve(self, image_b64, notes=(), earlier_images=(), skip=0):
         content = []
         if notes:
             content.append({"type": "text", "text": "Notes from earlier screens, oldest first (use only if needed):\n"
@@ -473,7 +480,7 @@ class Claude:
         return self.chat([
             {"role": "system", "content": system_prompt()},
             {"role": "user", "content": content},
-        ], max_tokens=4000)  # room for the private working (and thinking models); only short fields are shown
+        ], max_tokens=8000, skip=skip)  # room for thinking models; only the short fields are shown  # room for the private working (and thinking models); only short fields are shown
 
 
 # ---------------------------------------------------------------- watch delivery (ntfy)
@@ -567,11 +574,21 @@ class StudyWatch:
             started = time.time()
             current = to_jpeg_base64(image)
             notes, earlier = self.recent_notes(), self.recent_images()
-            result = parse_answer(self.claude.solve(current, notes))
+
+            def ask(earlier_images=()):
+                # A reply without the answer fields (e.g. a thinking model that ran out of room) is never
+                # shown; the next-best model gets one try instead.
+                for skip in (0, 1):
+                    result = parse_answer(self.claude.solve(current, notes, earlier_images, skip=skip))
+                    if result["ok"]:
+                        return result
+                raise RuntimeError("The AI didn't give a usable answer. Tap Right Ctrl to try again.")
+
+            result = ask()
             if "Need:" in result["answer"] and earlier and not result["new_set"]:
                 # The notes weren't enough (e.g. it needs a chart no earlier question used):
                 # ask again with the last few screenshots themselves.
-                retry = parse_answer(self.claude.solve(current, notes, earlier))
+                retry = ask(earlier)
                 result = dict(retry, context=retry["context"] or result["context"])
             if result["new_set"]:
                 self.forget()  # a different question set: old charts and passages must not leak in
