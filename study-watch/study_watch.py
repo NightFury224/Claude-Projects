@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import os
+import queue
 import re
 import secrets
 import string
@@ -35,7 +36,8 @@ DEFAULTS = {
     "openrouter_key": "",
     "model": "auto",
     "hotkey_screen": "ctrl+shift+space",
-    "hotkey_region": "ctrl+shift+alt+space",
+    "hotkey_region": "",
+    "capture": "gdi",
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": "",
     "ntfy_token": "",
@@ -151,18 +153,78 @@ def split_text(text, size):
 
 # ---------------------------------------------------------------- screenshots
 
-def capture_screen():
-    """The monitor the mouse is on, as a PNG image."""
+def capture_screen(method="gdi"):
+    """The entire screen (every monitor). method is "gdi" or "wgc"; WGC falls back to GDI if it fails."""
+    if method == "wgc":
+        try:
+            return capture_wgc()
+        except Exception:  # noqa: BLE001 - WGC can be missing or blocked; GDI always works
+            log_error("WGC capture failed, used GDI instead:\n" + traceback.format_exc())
+    return capture_gdi()
+
+
+def capture_gdi():
+    """GDI (BitBlt) grab of the whole virtual screen. Fast and works everywhere."""
     import mss
     from PIL import Image
 
-    x, y = cursor_position()
     with mss.mss() as sct:
-        monitors = sct.monitors[1:]
-        monitor = next((m for m in monitors if m["left"] <= x < m["left"] + m["width"]
-                        and m["top"] <= y < m["top"] + m["height"]), monitors[0])
-        shot = sct.grab(monitor)
+        shot = sct.grab(sct.monitors[0])  # monitor 0 = all monitors together
         return Image.frombytes("RGB", shot.size, shot.rgb)
+
+
+def monitor_count():
+    import mss
+
+    with mss.mss() as sct:
+        return len(sct.monitors) - 1
+
+
+def capture_wgc():
+    """Windows Graphics Capture: one frame from each monitor, placed side by side. Handles GPU-drawn
+    content and HDR better than GDI. Like GDI, it shows windows that opt out of capture as black."""
+    from PIL import Image
+
+    frames = [wgc_frame(index) for index in range(1, monitor_count() + 1)]
+    if len(frames) == 1:
+        return frames[0]
+    canvas = Image.new("RGB", (sum(f.width for f in frames), max(f.height for f in frames)))
+    x = 0
+    for frame in frames:
+        canvas.paste(frame, (x, 0))
+        x += frame.width
+    return canvas
+
+
+def wgc_frame(monitor_index, timeout=3.0):
+    from PIL import Image
+    from windows_capture import WindowsCapture
+
+    try:  # hiding the yellow capture border needs Windows 11
+        capture = WindowsCapture(cursor_capture=False, draw_border=False, monitor_index=monitor_index)
+    except Exception:  # noqa: BLE001
+        capture = WindowsCapture(cursor_capture=False, draw_border=None, monitor_index=monitor_index)
+    result = {}
+    arrived = threading.Event()
+
+    @capture.event
+    def on_frame_arrived(frame, capture_control):
+        # The buffer is mapped GPU memory, so copy it (BGRA → RGB) before stopping.
+        result["image"] = Image.fromarray(frame.frame_buffer[:, :, [2, 1, 0]].copy())
+        arrived.set()
+        capture_control.stop()
+
+    @capture.event
+    def on_closed():
+        arrived.set()
+
+    control = capture.start_free_threaded()
+    if not arrived.wait(timeout):
+        control.stop()
+        raise TimeoutError(f"No WGC frame from monitor {monitor_index} within {timeout:.0f} s")
+    if "image" not in result:
+        raise RuntimeError(f"WGC capture of monitor {monitor_index} closed without a frame")
+    return result["image"]
 
 
 def capture_region():
@@ -207,21 +269,8 @@ def capture_region():
     (x1, y1), (x2, y2) = box["start"], box["end"]
     left, top, right, bottom = min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
     if right - left < 10 or bottom - top < 10:
-        return capture_screen()
+        return capture_gdi()
     return ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
-
-
-def cursor_position():
-    if sys.platform == "win32":
-        import ctypes
-
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-        point = POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
-        return point.x, point.y
-    return 0, 0
 
 
 def to_jpeg_base64(image, max_side=1600):
@@ -351,6 +400,9 @@ class StudyWatch:
         self.session = None  # {"id", "question", "answer", "steps", "next", "log"}
         self.status_callback = lambda state: None
         self.stop = threading.Event()
+        # The revision log is written by its own thread, after the answer is on its way to the watch.
+        self.log_jobs = queue.Queue()
+        threading.Thread(target=self._log_worker, daemon=True).start()
 
     def set_status(self, state):
         self.status_callback(state)
@@ -363,17 +415,18 @@ class StudyWatch:
 
     def _run(self, region):
         try:
-            image = capture_region() if region else capture_screen()
+            image = capture_region() if region else capture_screen(self.config.get("capture", "gdi"))
             if image is None:
                 return
             self.set_status("working")
             started = time.time()
             result = parse_answer(self.claude.solve(to_jpeg_base64(image)))
             session_id = secrets.token_hex(4)
-            log_path = self.write_log(image, result, session_id)
+            log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
             self.send_overview()
             self.set_status("idle")
+            self.log_jobs.put(lambda: self.write_log(log_path, image, result, session_id))
             print(f"Delivered in {time.time() - started:.1f}s")
         except Exception as error:  # noqa: BLE001 - anything that goes wrong should reach the watch
             log_error(traceback.format_exc())
@@ -432,10 +485,10 @@ class StudyWatch:
                                                 "more simply, like a patient tutor."},
                 ], max_tokens=600)
                 explanation = to_watch_text(reply)
-                self.append_log(s["log"], f"**More on {focus}:** {explanation}")
                 self.watch.send(f"💡 More on {focus}", explanation,
                                 [self.watch.button("Next step ▶", "next", s["id"]),
                                  self.watch.button("Explain more", "more", s["id"])], priority=3)
+                self.log_jobs.put(lambda: self.append_log(s["log"], f"**More on {focus}:** {explanation}"))
                 self.set_status("idle")
         except Exception as error:  # noqa: BLE001
             log_error(traceback.format_exc())
@@ -447,9 +500,16 @@ class StudyWatch:
 
     # ------------------------------------------------------------ revision log
 
-    def write_log(self, image, result, session_id):
+    def _log_worker(self):
+        while True:
+            job = self.log_jobs.get()
+            try:
+                job()
+            except Exception:  # noqa: BLE001 - a full disk must not stop answers reaching the watch
+                log_error(traceback.format_exc())
+
+    def write_log(self, log_path, image, result, session_id):
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
         lines = [f"\n## {datetime.now():%Y-%m-%d %H:%M} · {result['question']}\n"]
         if self.config.get("save_screenshots", True):
             shots = LOG_DIR / "screenshots"
@@ -461,7 +521,6 @@ class StudyWatch:
         lines += [f"{i + 1}. {step}" for i, step in enumerate(result["steps"])]
         with log_path.open("a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
-        return log_path
 
     @staticmethod
     def append_log(log_path, text):
@@ -513,6 +572,13 @@ def main():
     import keyboard
     import pystray
 
+    if sys.platform == "win32":
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor: capture at real resolution
+        except (AttributeError, OSError):
+            ctypes.windll.user32.SetProcessDPIAware()
+
     app = StudyWatch()
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
     hotkeys = []
@@ -521,9 +587,12 @@ def main():
         for handle in hotkeys:
             keyboard.remove_hotkey(handle)
         hotkeys.clear()
-        hotkeys.append(keyboard.add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False)))
+        # suppress=True keeps the shortcut from also reaching the app you're in.
+        hotkeys.append(keyboard.add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False),
+                                           suppress=True))
         if app.config.get("hotkey_region"):
-            hotkeys.append(keyboard.add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True)))
+            hotkeys.append(keyboard.add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True),
+                                               suppress=True))
 
     def settings(icon, item):
         os.startfile(CONFIG_FILE)  # opens in Notepad; "Reload settings" applies changes
@@ -551,6 +620,10 @@ def main():
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         os.startfile(LOG_DIR)
 
+    def toggle_wgc(icon, item):
+        app.config["capture"] = "gdi" if app.config.get("capture") == "wgc" else "wgc"
+        save_config(app.config)
+
     def toggle_startup(icon, item):
         set_start_with_windows(not starts_with_windows())
 
@@ -567,6 +640,8 @@ def main():
         pystray.MenuItem("Open revision log", open_log),
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),
         pystray.MenuItem("Reload settings", reload_settings),
+        pystray.MenuItem("Use Windows Graphics Capture", toggle_wgc,
+                         checked=lambda item: app.config.get("capture") == "wgc"),
         pystray.MenuItem("Start with Windows", toggle_startup, checked=lambda item: starts_with_windows()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", quit_app),

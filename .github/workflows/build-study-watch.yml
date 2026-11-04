@@ -29,8 +29,10 @@ jobs:
       - name: Build StudyWatch.exe
         run: pyinstaller --onefile --noconsole --name StudyWatch study_watch.py
 
-      - name: Check the text helpers
-        run: python test_text.py
+      - name: Check the text helpers and imports
+        run: |
+          python test_text.py
+          python -c 'import windows_capture, mss, pystray, keyboard; print("imports ok")'
 
       - uses: actions/upload-artifact@v4
         with:

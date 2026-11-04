@@ -7,14 +7,15 @@ Ctrl+Shift+Space → screenshot → Claude (OpenRouter) → ntfy → phone → G
                                         └→ revision log (Documents\StudyWatch)
 ```
 
-- Runs in the system tray. Your laptop stays usable: no answer window, no popups, no focus changes.
+- Captures the **entire screen** (all monitors).
+- Runs in the system tray. Your laptop stays usable: no answer window, no popups, no focus changes. The shortcut is swallowed, so it doesn't also type into the app you're in.
 - The tray icon colour shows the state: 🔵 ready, 🟠 working, 🔴 last request failed (the error is also sent to the watch).
 - On the watch you get the question and the final answer, with three buttons:
   - **Next step ▶** shows the solution one step at a time.
   - **All steps** sends the full worked solution as one scrollable message.
   - **Explain more** gives a simpler, more detailed explanation of the step you're on.
 - Maths arrives as readable Unicode (x², √(x+1), ∫, π, ≤ and so on), never as LaTeX.
-- **Revision log:** `Documents\StudyWatch\revision-YYYY-MM.md` holds every question, its screenshot, the answer, the steps and the extra explanations. Open it from the tray menu.
+- **Revision log:** `Documents\StudyWatch\revision-YYYY-MM.md` holds every question, its screenshot, the answer, the steps and the extra explanations. It's written silently in the background *after* the answer is sent, so it never slows delivery. Open it from the tray menu whenever you want to revise.
 
 **Why ntfy?** Answers reach the watch through the free [ntfy](https://ntfy.sh) app on your phone. Its notifications, buttons included, are mirrored to Wear OS like any other app's, and it uses instant push without polling, so it's light on battery. This avoids a custom watch app and a Firebase project, and works whether your phone and laptop share Wi-Fi or not.
 
@@ -41,16 +42,43 @@ In the **Galaxy Wearable** app on the phone, go to **Watch settings → Notifica
 5. Optional: tray icon → **Start with Windows**.
 
 ### 4. Use it
-- **Ctrl+Shift+Space** sends the monitor your mouse is on.
-- **Ctrl+Shift+Alt+Space** lets you drag a box around just the question (Esc cancels). Use this when the screen is busy; it's faster and more accurate.
+Press **Ctrl+Shift+Space**. The answer arrives on the watch in about 5–15 seconds.
 
-An answer takes about 5–15 seconds.
+## Capture method: GDI or Windows Graphics Capture
+Tray icon → **Use Windows Graphics Capture** switches between the two (or set `"capture"` to `"gdi"` or `"wgc"`).
+
+| | GDI (default) | Windows Graphics Capture |
+|---|---|---|
+| Speed | About 10–30 ms | About 50–150 ms (sets up a capture session each time) |
+| GPU-drawn apps, video players | Sometimes black | ✅ |
+| HDR screens | Washed-out colours | ✅ correct colours |
+| Visible sign | None | A yellow border flashes briefly on Windows 10; hidden on Windows 11 |
+
+If WGC fails for any reason, Study Watch uses GDI for that shot and notes it in `errors.log`. Both methods show windows that block screen capture (DRM video, secure apps) as black.
+
+## Choosing a shortcut
+Set `hotkey_screen` in Settings, then tray → **Reload settings**. Good choices that rarely clash with other apps:
+
+| Shortcut | Notes |
+|---|---|
+| `ctrl+shift+space` | Default. Swallowed, so it won't trigger VS Code hints or Word's non-breaking space |
+| `ctrl+alt+x` | Easy one-hand reach (avoid `ctrl+alt+` letters on keyboards that use AltGr) |
+| `ctrl+shift+f9` … `f12` | Rarely used by apps. On many laptops the F-keys need **Fn**, unless Fn-lock is on |
+| `alt+shift+z` | Left-hand only |
+| `windows+shift+a` | Use with care: Windows owns many `windows+` shortcuts |
+| `scroll lock`, `pause` or `insert` | One key, no clash, if your laptop has it |
+| `right ctrl` | Single key; fine if you only use the left Ctrl |
+
+Avoid `ctrl+shift+q` (closes Firefox), `ctrl+shift+s` (Save As), `ctrl+shift+t` (reopens a browser tab) and `windows+shift+s` (Snipping Tool).
+
+Optional: set `hotkey_region` (e.g. `ctrl+shift+alt+space`) to also be able to drag a box around just one question.
 
 ## Settings (`config.json`)
 | Setting | Default | |
 |---|---|---|
 | `hotkey_screen` | `ctrl+shift+space` | Whole-screen hotkey |
-| `hotkey_region` | `ctrl+shift+alt+space` | Region hotkey (`""` turns it off) |
+| `hotkey_region` | `""` (off) | Optional drag-a-box hotkey |
+| `capture` | `gdi` | `gdi` or `wgc` (see above) |
 | `model` | `auto` | `auto` picks OpenRouter's newest Claude Sonnet. You can also give an id, e.g. `anthropic/claude-opus-…`, for harder maths. |
 | `ntfy_server` / `ntfy_token` | `https://ntfy.sh` / empty | For your own ntfy server, or an ntfy.sh account with a reserved topic |
 | `save_screenshots` | `true` | Keep screenshots in the revision log |
