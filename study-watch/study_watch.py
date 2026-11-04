@@ -43,6 +43,7 @@ DEFAULTS = {
     "ntfy_topic": "",
     "ntfy_token": "",
     "save_screenshots": True,
+    "ready_message": True,
 }
 
 DEFAULT_RULES = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
@@ -113,16 +114,47 @@ def system_prompt():
 
 # ---------------------------------------------------------------- settings
 
-def load_config():
+def load_config(problems=None):
+    """Never fails: a broken config.json starts the app with what can be recovered, and each problem is
+    added to [problems] so it can be sent to the watch. A broken file is left as it is for you to fix."""
+    problems = [] if problems is None else problems
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config = dict(DEFAULTS)
+    broken = False
     if CONFIG_FILE.exists():
-        config.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
+        text = CONFIG_FILE.read_text(encoding="utf-8-sig")  # Notepad may add a BOM
+        try:
+            saved = json.loads(text)
+            if not isinstance(saved, dict):
+                raise ValueError("not a { … } object")
+            config.update(saved)
+        except ValueError as error:
+            broken = True
+            problems.append(f"config.json has a mistake ({error}). Using what could be read; fix it and "
+                            "Reload settings.")
+            # Rescue the important values so answers (and this warning) still reach the watch.
+            for key in DEFAULTS:
+                found = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+                if found and isinstance(DEFAULTS[key], str):
+                    config[key] = found.group(1)
+    for key, default in DEFAULTS.items():
+        if not isinstance(config.get(key), type(default)):
+            problems.append(f'"{key}" should be {type(default).__name__}; using the default.')
+            config[key] = default
+    if config["capture"] not in ("gdi", "wgc"):
+        problems.append(f'"capture" must be "gdi" or "wgc", not "{config["capture"]}"; using "gdi".')
+        config["capture"] = "gdi"
+    if not config["hotkey_screen"].strip():
+        problems.append('"hotkey_screen" is empty; using "right ctrl".')
+        config["hotkey_screen"] = DEFAULTS["hotkey_screen"]
+    if not config["openrouter_key"].strip():
+        problems.append("No OpenRouter key yet: tray icon → Settings.")
     if not config["ntfy_topic"]:
         # The topic name is the only thing protecting answers on the public ntfy server: keep it long and random.
         alphabet = string.ascii_lowercase + string.digits
         config["ntfy_topic"] = "studywatch-" + "".join(secrets.choice(alphabet) for _ in range(20))
-    save_config(config)
+    if not broken:
+        save_config(config)
     return config
 
 
@@ -541,7 +573,8 @@ class Watch:
 
 class StudyWatch:
     def __init__(self):
-        self.config = load_config()
+        self.problems = []  # setup problems found while loading, reported in the ready message
+        self.config = load_config(self.problems)
         self.claude = Claude(self.config)
         self.watch = Watch(self.config)
         self.busy = threading.Lock()
@@ -634,6 +667,42 @@ class StudyWatch:
     def forget(self):
         self.memory.clear()
         self.screens.clear()
+
+    def send_ready(self, hotkey_ok=True):
+        """Startup check of the whole chain: OpenRouter key → ntfy → phone → watch. Retries for a few
+        minutes, because at Windows start-up the internet often isn't connected yet."""
+        problems = list(self.problems)
+        if not hotkey_ok:
+            problems.append(f'The shortcut "{self.config["hotkey_screen"]}" isn\'t valid; using right ctrl.')
+        for attempt in range(20):
+            if self.stop.is_set():
+                return
+            try:
+                key_problem = self.check_key()
+                if key_problem:
+                    problems.append(key_problem)
+                if problems:
+                    self.watch.send("⚠️ Study Watch started with problems", "\n".join(f"• {p}" for p in problems),
+                                    priority=4)
+                    self.set_status("error")
+                elif self.config.get("ready_message", True):
+                    self.watch.send("✅ Study Watch ready", f"Tap {self.config['hotkey_screen']} on the laptop.",
+                                    priority=2)
+                return
+            except requests.RequestException:
+                self.stop.wait(15)
+        log_error("Couldn't send the ready message: no internet for 5 minutes.")
+        self.set_status("error")
+
+    def check_key(self):
+        """Checks the OpenRouter key without using up a request. Returns a problem, or None."""
+        key = self.config.get("openrouter_key", "").strip()
+        if not key:
+            return None  # already reported by load_config
+        response = requests.get(f"{OPENROUTER}/key", headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        if response.status_code == 401:
+            return "OpenRouter rejected the key. Check it in Settings."
+        return None
 
     def send_overview(self):
         s = self.session
@@ -809,12 +878,24 @@ def main():
             hotkeys.append(("hotkey", keyboard.add_hotkey(combo, action, suppress=True)))
 
     def register_hotkeys():
+        """Returns False if a configured shortcut was invalid (Right Ctrl is used instead)."""
         for kind, handle in hotkeys:
             keyboard.unhook(handle) if kind == "hook" else keyboard.remove_hotkey(handle)
         hotkeys.clear()
-        add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False))
+        ok = True
+        try:
+            add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False))
+        except ValueError:
+            ok = False
+            log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
+            add_hotkey(DEFAULTS["hotkey_screen"], lambda: app.run(region=False))
         if app.config.get("hotkey_region"):
-            add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True))
+            try:
+                add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True))
+            except ValueError:
+                ok = False
+                log_error(f"Invalid region hotkey {app.config['hotkey_region']!r}, ignored")
+        return ok
 
     def settings(icon, item):
         os.startfile(CONFIG_FILE)  # opens in Notepad; "Reload settings" applies changes
@@ -825,11 +906,14 @@ def main():
 
     def reload_settings(icon, item):
         try:
+            app.problems = []
             app.config.clear()
-            app.config.update(load_config())
+            app.config.update(load_config(app.problems))
             app.claude._models = None
-            register_hotkeys()
             icon.icon = icons["idle"]
+            hotkey_ok = register_hotkeys()
+            # Same check as at start-up, so a fix (or a new mistake) is confirmed on the watch.
+            threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
         except Exception:  # noqa: BLE001
             log_error(traceback.format_exc())
             icon.icon = icons["error"]
@@ -881,7 +965,8 @@ def main():
                       "error": "Study Watch: last request failed (see watch)"}[state]
 
     app.status_callback = show_status
-    register_hotkeys()
+    hotkey_ok = register_hotkeys()
+    threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
     threading.Thread(target=app.watch.listen, args=(app.handle_command, app.stop), daemon=True).start()
     if not app.config["openrouter_key"]:
         icon.icon = icons["error"]

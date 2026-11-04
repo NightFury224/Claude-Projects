@@ -67,4 +67,19 @@ s.RULES_FILE.write_text("Answer in French.", encoding="utf-8")
 assert s.system_prompt() == "Answer in French.\n\n" + s.REPLY_FORMAT
 s.RULES_FILE.write_text("  ", encoding="utf-8")  # emptied file falls back to the defaults
 assert s.load_rules() == s.DEFAULT_RULES.strip()
+# A broken config.json still loads: key and topic are rescued, problems are listed, the file is kept.
+s.CONFIG_FILE = s.CONFIG_DIR / "config.json"
+broken_json = '{"openrouter_key": "sk-or-123", "ntfy_topic": "studywatch-abc" "capture": "wgc",}'
+s.CONFIG_FILE.write_text(broken_json, encoding="utf-8")
+problems = []
+config = s.load_config(problems)
+assert config["openrouter_key"] == "sk-or-123" and config["ntfy_topic"] == "studywatch-abc", config
+assert config["capture"] == "wgc" and problems and "mistake" in problems[0], problems
+assert s.CONFIG_FILE.read_text(encoding="utf-8") == broken_json
+# Wrong types and values fall back to defaults with a note.
+s.CONFIG_FILE.write_text('{"openrouter_key": "k", "ntfy_topic": "t", "capture": "gpu", "save_screenshots": "yes"}',
+                         encoding="utf-8")
+problems = []
+config = s.load_config(problems)
+assert config["capture"] == "gdi" and config["save_screenshots"] is True and len(problems) == 2, problems
 print("ok")

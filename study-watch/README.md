@@ -102,6 +102,7 @@ Tray icon → **Edit AI rules** opens `%APPDATA%\StudyWatch\rules.txt` in Notepa
 | `model` | `auto` | `auto` uses the best **free** image models, falling back to the next if one is busy. `claude` uses the newest Claude Sonnet (needs credit, most accurate). Or give any OpenRouter model id. |
 | `ntfy_server` / `ntfy_token` | `https://ntfy.sh` / empty | For your own ntfy server, or an ntfy.sh account with a reserved topic |
 | `save_screenshots` | `true` | Keep screenshots in the revision log |
+| `ready_message` | `true` | Send "✅ Study Watch ready" when the app starts. Problems are always sent, even when this is off |
 
 After editing, use tray → **Reload settings**.
 
@@ -112,6 +113,14 @@ After editing, use tray → **Reload settings**.
 ## Privacy
 - Screenshots go to OpenRouter and on to Anthropic.
 - Answers pass through the ntfy.sh server. Anyone who knows the random topic name could read them, so don't share it. For more privacy, reserve the topic with an ntfy account and put its token in `ntfy_token`, or run your own ntfy server.
+
+## Start-up check
+Every time Study Watch starts (and after **Reload settings**), it checks the whole chain: your OpenRouter key, ntfy, phone and watch. Then it sends one notification:
+- **✅ Study Watch ready.** Everything works. If this arrives on your watch, you're set for the session.
+- **⚠️ Study Watch started with problems,** with a list such as a mistake in `config.json`, an invalid shortcut, or a rejected key.
+- **No message at all:** the laptop has no internet, or ntfy on the phone isn't running. The tray icon turns 🔴 if it couldn't send for 5 minutes. At Windows start-up it keeps retrying while the internet connects.
+
+A mistake in `config.json` never stops the app. It starts with the values it can still read (your key and topic are rescued), leaves the file untouched for you to fix, and tells you on the watch. An invalid shortcut falls back to Right Ctrl.
 
 ## Troubleshooting
 - **Nothing on the watch, but the phone gets it:** turn ntfy on in Galaxy Wearable → Notifications. By default the watch only shows phone notifications while the phone screen is off; turn on **Show phone notifications on watch → While using phone** if you want them always.
