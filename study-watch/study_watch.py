@@ -59,11 +59,14 @@ Rules for what is shown:
 - Steps are terse working, like notes in a margin: an equation or a few words, at most about 80 characters each.
 - Only the steps needed to reach the answer, at most 5. Skip arithmetic anyone can do in their head.
 - Multiple choice: answer with the option letter and its value, e.g. "B) 42".
+- Several questions on screen: answer every question that is fully visible (skip ones cut off at the edge).
+  Put all answers in "answer", numbered as on screen and separated by " · ", e.g. "Q2: A) 39°C · Q3: B) 27".
+  Start each step with its question number, e.g. "Q2: W+T+F = 120", and use at most 2 steps per question.
 
 Reply with JSON only, with "work" first:
 {"work": "your full private working and the check",
- "question": "the question in under 40 characters",
- "answer": "the final answer only, under 40 characters",
+ "question": "the question in under 40 characters, or e.g. \"Q2–Q3: averages\" for several",
+ "answer": "the final answer only, under 40 characters (about 25 more per extra question)",
  "steps": ["...", "..."]}
 Facts and definitions need 0 or 1 step. If there is no question, give the single key idea on screen as the answer."""
 
