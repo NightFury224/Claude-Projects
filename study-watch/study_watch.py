@@ -35,7 +35,7 @@ LOG_DIR = Path.home() / "Documents" / APP
 DEFAULTS = {
     "openrouter_key": "",
     "model": "auto",
-    "hotkey_screen": "ctrl+shift+space",
+    "hotkey_screen": "right ctrl",
     "hotkey_region": "",
     "capture": "gdi",
     "ntfy_server": "https://ntfy.sh",
@@ -543,6 +543,8 @@ def make_icon(colour):
 
 
 ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838"}
+MODIFIER_KEYS = {"right ctrl", "left ctrl", "right shift", "left shift", "right alt", "left alt",
+                 "alt gr", "right windows", "left windows"}
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -583,16 +585,36 @@ def main():
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
     hotkeys = []
 
+    def add_hotkey(combo, action):
+        combo = combo.strip().lower()
+        if "+" not in combo and combo in MODIFIER_KEYS:
+            # A lone modifier (e.g. right ctrl) fires when tapped on its own, and isn't swallowed,
+            # so shortcuts like right ctrl+c keep working.
+            state = {"down": False, "other": False}
+
+            def on_key(event):
+                if event.name == combo:
+                    if event.event_type == "down" and not state["down"]:
+                        state.update(down=True, other=False)
+                    elif event.event_type == "up" and state["down"]:
+                        state["down"] = False
+                        if not state["other"]:
+                            action()
+                elif event.event_type == "down":
+                    state["other"] = True
+
+            hotkeys.append(("hook", keyboard.hook(on_key)))
+        else:
+            # suppress=True keeps the shortcut from also reaching the app you're in.
+            hotkeys.append(("hotkey", keyboard.add_hotkey(combo, action, suppress=True)))
+
     def register_hotkeys():
-        for handle in hotkeys:
-            keyboard.remove_hotkey(handle)
+        for kind, handle in hotkeys:
+            keyboard.unhook(handle) if kind == "hook" else keyboard.remove_hotkey(handle)
         hotkeys.clear()
-        # suppress=True keeps the shortcut from also reaching the app you're in.
-        hotkeys.append(keyboard.add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False),
-                                           suppress=True))
+        add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False))
         if app.config.get("hotkey_region"):
-            hotkeys.append(keyboard.add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True),
-                                               suppress=True))
+            add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True))
 
     def settings(icon, item):
         os.startfile(CONFIG_FILE)  # opens in Notepad; "Reload settings" applies changes

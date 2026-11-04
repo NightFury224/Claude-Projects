@@ -3,7 +3,7 @@
 Press a hotkey on your Windows laptop. Claude reads your screen and the answer arrives on your Galaxy Watch, step by step. Every question and answer is also saved to a revision log on the laptop.
 
 ```
-Ctrl+Shift+Space → screenshot → Claude (OpenRouter) → ntfy → phone → Galaxy Watch
+Right Ctrl → screenshot → Claude (OpenRouter) → ntfy → phone → Galaxy Watch
                                         └→ revision log (Documents\StudyWatch)
 ```
 
@@ -28,7 +28,7 @@ Ctrl+Shift+Space → screenshot → Claude (OpenRouter) → ntfy → phone → G
 2. Settings → turn on **Instant delivery**, and set Android's battery setting for ntfy to **Unrestricted**. On Realme: Settings → Apps → ntfy → Battery → **Allow background activity**.
 3. You'll add your topic in step 3.
 
-### 2. Watch: Galaxy Wearable
+### 2. Watch: Galaxy Wearable (skip until you have one; answers and buttons work on the phone too)
 In the **Galaxy Wearable** app on the phone, go to **Watch settings → Notifications** and make sure **ntfy** is turned on.
 
 ### 3. Laptop: Study Watch
@@ -42,7 +42,7 @@ In the **Galaxy Wearable** app on the phone, go to **Watch settings → Notifica
 5. Optional: tray icon → **Start with Windows**.
 
 ### 4. Use it
-Press **Ctrl+Shift+Space**. The answer arrives on the watch in about 5–15 seconds.
+Tap **Right Ctrl** on its own. The answer arrives on the watch in about 5–15 seconds.
 
 ## Capture method: GDI or Windows Graphics Capture
 Tray icon → **Use Windows Graphics Capture** switches between the two (or set `"capture"` to `"gdi"` or `"wgc"`).
@@ -61,13 +61,13 @@ Set `hotkey_screen` in Settings, then tray → **Reload settings**. Good choices
 
 | Shortcut | Notes |
 |---|---|
-| `ctrl+shift+space` | Default. Swallowed, so it won't trigger VS Code hints or Word's non-breaking space |
+| `right ctrl` | **Default.** Tap it on its own. Right Ctrl+C and other combos still work normally |
+| `ctrl+shift+space` | Swallowed, so it won't trigger VS Code hints or Word's non-breaking space |
 | `ctrl+alt+x` | Easy one-hand reach (avoid `ctrl+alt+` letters on keyboards that use AltGr) |
 | `ctrl+shift+f9` … `f12` | Rarely used by apps. On many laptops the F-keys need **Fn**, unless Fn-lock is on |
 | `alt+shift+z` | Left-hand only |
 | `windows+shift+a` | Use with care: Windows owns many `windows+` shortcuts |
 | `scroll lock`, `pause` or `insert` | One key, no clash, if your laptop has it |
-| `right ctrl` | Single key; fine if you only use the left Ctrl |
 
 Avoid `ctrl+shift+q` (closes Firefox), `ctrl+shift+s` (Save As), `ctrl+shift+t` (reopens a browser tab) and `windows+shift+s` (Snipping Tool).
 
@@ -76,7 +76,7 @@ Optional: set `hotkey_region` (e.g. `ctrl+shift+alt+space`) to also be able to d
 ## Settings (`config.json`)
 | Setting | Default | |
 |---|---|---|
-| `hotkey_screen` | `ctrl+shift+space` | Whole-screen hotkey |
+| `hotkey_screen` | `right ctrl` | Whole-screen hotkey (a lone modifier fires when tapped by itself) |
 | `hotkey_region` | `""` (off) | Optional drag-a-box hotkey |
 | `capture` | `gdi` | `gdi` or `wgc` (see above) |
 | `model` | `auto` | `auto` picks OpenRouter's newest Claude Sonnet. You can also give an id, e.g. `anthropic/claude-opus-…`, for harder maths. |
