@@ -1,6 +1,6 @@
 """
 Study Watch: press a hotkey, the screen goes to Claude (via OpenRouter), and the answer arrives on
-your watch as a notification (via ntfy), split into steps with "Next step" / "Explain more" buttons.
+your watch as a notification (via ntfy), split into steps with "Next step" / "Why?" buttons.
 Every question and answer is also saved to a revision log on the laptop.
 
 Runs in the Windows system tray. Settings live in %APPDATA%\\StudyWatch\\config.json.
@@ -44,19 +44,21 @@ DEFAULTS = {
     "save_screenshots": True,
 }
 
-SYSTEM_PROMPT = """You are a study tutor. The user is revising and has sent a screenshot of what they are reading.
-Find the question (or the main thing being studied) and solve or explain it.
+SYSTEM_PROMPT = """You solve the question in a screenshot for someone reading the reply on a tiny smartwatch.
+Be as short as possible. Every word must move toward the final answer.
 
-The answer is read on a small round smartwatch, so:
-- Plain text only. No markdown, no LaTeX, no tables.
-- Write maths with Unicode: x², x³, √(x+1), ∛, π, θ, ∞, ≤, ≥, ≠, ≈, ±, ×, ÷, ∫, ∑, ∂, →, a/b, (x+1)/(x−1), log₂, aₙ.
-- Short lines. Each step at most about 400 characters.
+Rules:
+- No intro, no restating the question, no "Let's", "First, we", "So", "Therefore" or recap. No pleasantries.
+- Plain text. No markdown or LaTeX. Maths in Unicode: x², √(x+1), π, θ, ≤, ≥, ≠, ≈, ±, ×, ÷, ∫, ∑, →, (a+b)/c, log₂, aₙ.
+- Steps are terse working, like notes in a margin: an equation or a few words, at most about 80 characters each.
+- Only the steps needed to reach the answer, at most 5. Skip arithmetic anyone can do in their head.
+- Multiple choice: answer with the option letter and its value, e.g. "B) 42".
 
-Reply with JSON only, in exactly this shape:
-{"question": "the question in under 80 characters",
- "answer": "the final answer in one or two short lines",
- "steps": ["Step 1 ...", "Step 2 ...", "..."]}
-Use 1 step for simple facts and up to 8 for long problems. If there is no question, explain the key idea on screen."""
+Reply with JSON only:
+{"question": "the question in under 40 characters",
+ "answer": "the final answer only, under 40 characters",
+ "steps": ["...", "..."]}
+Facts and definitions need 0 or 1 step. If there is no question, give the single key idea on screen as the answer."""
 
 
 # ---------------------------------------------------------------- settings
@@ -329,10 +331,10 @@ class Claude:
         return self.chat([
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": [
-                {"type": "text", "text": "Solve or explain what's on my screen."},
+                {"type": "text", "text": "Solve it."},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
             ]},
-        ])
+        ], max_tokens=500)
 
 
 # ---------------------------------------------------------------- watch delivery (ntfy)
@@ -442,10 +444,10 @@ class StudyWatch:
         s = self.session
         message = s["answer"]
         if len(s["steps"]) > 1:
-            message += f"\n\n{len(s['steps'])} steps. Tap Next step to work through them."
+            message += f"\n({len(s['steps'])} steps)"
         buttons = [self.watch.button("Next step ▶", "next", s["id"]),
                    self.watch.button("All steps", "all", s["id"]),
-                   self.watch.button("Explain more", "more", s["id"])]
+                   self.watch.button("Why?", "more", s["id"])]
         self.watch.send(f"📘 {s['question']}", message, buttons)
 
     def handle_command(self, text):
@@ -466,12 +468,12 @@ class StudyWatch:
                 index = s["next"]
                 s["next"] += 1
                 buttons = [self.watch.button("Next step ▶", "next", s["id"]),
-                           self.watch.button("Explain more", "more", s["id"])]
+                           self.watch.button("Why?", "more", s["id"])]
                 self.watch.send(f"Step {index + 1} of {total}", s["steps"][index], buttons, priority=3)
             elif command == "all":
                 text = "\n\n".join(f"{i + 1}. {step}" for i, step in enumerate(s["steps"]))
                 self.watch.send(f"📘 {s['question']}", f"{text}\n\nAnswer: {s['answer']}",
-                                [self.watch.button("Explain more", "more", s["id"])], priority=3)
+                                [self.watch.button("Why?", "more", s["id"])], priority=3)
             elif command == "more":
                 self.set_status("working")
                 step = max(s["next"] - 1, 0)
@@ -479,16 +481,16 @@ class StudyWatch:
                 worked = "\n".join(f"Step {i + 1}: {t}" for i, t in enumerate(s["steps"]))
                 reply = self.claude.chat([
                     {"role": "system", "content": SYSTEM_PROMPT.split("Reply with JSON")[0]
-                     + "Reply in plain text, at most 600 characters."},
+                     + "Reply in plain text, in at most 3 short lines (under 200 characters)."},
                     {"role": "user", "content": f"Question: {s['question']}\nWorked solution:\n{worked}\n"
-                                                f"Answer: {s['answer']}\n\nExplain {focus} in more detail, "
-                                                "more simply, like a patient tutor."},
-                ], max_tokens=600)
+                                                f"Answer: {s['answer']}\n\nWhy does {focus} work? Give the "
+                                                "one key reason or rule, as briefly as possible."},
+                ], max_tokens=300)
                 explanation = to_watch_text(reply)
-                self.watch.send(f"💡 More on {focus}", explanation,
+                self.watch.send(f"💡 Why ({focus})", explanation,
                                 [self.watch.button("Next step ▶", "next", s["id"]),
-                                 self.watch.button("Explain more", "more", s["id"])], priority=3)
-                self.log_jobs.put(lambda: self.append_log(s["log"], f"**More on {focus}:** {explanation}"))
+                                 self.watch.button("Why?", "more", s["id"])], priority=3)
+                self.log_jobs.put(lambda: self.append_log(s["log"], f"**Why ({focus}):** {explanation}"))
                 self.set_status("idle")
         except Exception as error:  # noqa: BLE001
             log_error(traceback.format_exc())

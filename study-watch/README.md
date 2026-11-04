@@ -13,7 +13,7 @@ Right Ctrl → screenshot → Claude (OpenRouter) → ntfy → phone → Galaxy 
 - On the watch you get the question and the final answer, with three buttons:
   - **Next step ▶** shows the solution one step at a time.
   - **All steps** sends the full worked solution as one scrollable message.
-  - **Explain more** gives a simpler, more detailed explanation of the step you're on.
+  - **Why?** gives the one key reason behind the step you're on, in a line or two.
 - Maths arrives as readable Unicode (x², √(x+1), ∫, π, ≤ and so on), never as LaTeX.
 - **Revision log:** `Documents\StudyWatch\revision-YYYY-MM.md` holds every question, its screenshot, the answer, the steps and the extra explanations. It's written silently in the background *after* the answer is sent, so it never slows delivery. Open it from the tray menu whenever you want to revise.
 
