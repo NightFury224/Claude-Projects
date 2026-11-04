@@ -30,6 +30,7 @@ NTFY_LIMIT = 1300  # ntfy caps messages at 4096 bytes; maths symbols take up to 
 CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP
 CONFIG_FILE = CONFIG_DIR / "config.json"
 ERROR_LOG = CONFIG_DIR / "errors.log"
+RULES_FILE = CONFIG_DIR / "rules.txt"
 LOG_DIR = Path.home() / "Documents" / APP
 
 DEFAULTS = {
@@ -44,7 +45,7 @@ DEFAULTS = {
     "save_screenshots": True,
 }
 
-SYSTEM_PROMPT = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
+DEFAULT_RULES = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
 This works for any kind of question: maths, reasoning, graphs, tables, diagrams, reading comprehension,
 fill in the blank, true/false, match the following, odd one out, definitions, facts, anything.
 
@@ -86,11 +87,26 @@ Memory across screenshots (the user scrolls through question sets):
   notes (different directions, subject or chapter), so the old notes are dropped; otherwise false.
 - If something a question needs is nowhere available, answer that question with "Need: <what>"
   (e.g. "Need: chart 3"). Never answer with a placeholder like "...".
+"""
 
-Reply with JSON only, "work" first:
+# Fixed: the app reads these fields, so this part is not in rules.txt.
+REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
  "new_set": false}"""
+
+
+def load_rules():
+    """The instructions for the AI, from rules.txt (created with the defaults if missing). Read on every
+    question, so edits apply straight away."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not RULES_FILE.exists() or not RULES_FILE.read_text(encoding="utf-8").strip():
+        RULES_FILE.write_text(DEFAULT_RULES, encoding="utf-8")
+    return RULES_FILE.read_text(encoding="utf-8").strip()
+
+
+def system_prompt():
+    return load_rules() + "\n\n" + REPLY_FORMAT
 
 
 # ---------------------------------------------------------------- settings
@@ -455,7 +471,7 @@ class Claude:
         content.append({"type": "text", "text": "Solve what is on this screen:" if content else "Solve it."})
         content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}})
         return self.chat([
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt()},
             {"role": "user", "content": content},
         ], max_tokens=4000)  # room for the private working (and thinking models); only short fields are shown
 
@@ -644,7 +660,7 @@ class StudyWatch:
                 focus = f"step {step + 1}" if s["next"] else "the whole solution"
                 worked = "\n".join(f"Step {i + 1}: {t}" for i, t in enumerate(s["steps"]))
                 reply = self.claude.chat([
-                    {"role": "system", "content": SYSTEM_PROMPT.split("Reply with JSON")[0]
+                    {"role": "system", "content": load_rules() + "\n\n"
                      + "Reply in plain text, in at most 3 short lines (under 200 characters)."},
                     {"role": "user", "content": f"Question: {s['question']}\nWorked solution:\n{worked}\n"
                                                 f"Answer: {s['answer']}\n\nWhy does {focus} work? Give the "
@@ -748,6 +764,7 @@ def main():
             ctypes.windll.user32.SetProcessDPIAware()
 
     app = StudyWatch()
+    load_rules()  # make sure rules.txt exists so it can be edited
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
     hotkeys = []
 
@@ -784,6 +801,10 @@ def main():
 
     def settings(icon, item):
         os.startfile(CONFIG_FILE)  # opens in Notepad; "Reload settings" applies changes
+
+    def edit_rules(icon, item):
+        load_rules()  # creates rules.txt if it doesn't exist yet
+        os.startfile(RULES_FILE)  # changes apply to the next question, no reload needed
 
     def reload_settings(icon, item):
         try:
@@ -828,6 +849,7 @@ def main():
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open revision log", open_log),
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),
+        pystray.MenuItem("Edit AI rules", edit_rules),
         pystray.MenuItem("Reload settings", reload_settings),
         pystray.MenuItem("Use Windows Graphics Capture", toggle_wgc,
                          checked=lambda item: app.config.get("capture") == "wgc"),

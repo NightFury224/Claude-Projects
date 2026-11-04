@@ -86,6 +86,13 @@ Avoid `ctrl+shift+q` (closes Firefox), `ctrl+shift+s` (Save As), `ctrl+shift+t` 
 
 Optional: set `hotkey_region` (e.g. `ctrl+shift+alt+space`) to also be able to drag a box around just one question.
 
+## Changing how the AI answers (`rules.txt`)
+Tray icon → **Edit AI rules** opens `%APPDATA%\StudyWatch\rules.txt` in Notepad. It holds every instruction the AI gets: answer length, accuracy checks, multi-question format, memory rules and so on. Edit it in plain English and save. **The next question uses the new rules**; there's no need to reload or restart.
+
+- The reply format the app reads (the JSON fields) is kept in the app, not in `rules.txt`, so editing can't break the answers reaching your watch.
+- To go back to the original rules, delete `rules.txt` (or empty it). It's recreated with the defaults.
+- Updates to Study Watch don't overwrite your `rules.txt`. To get newer default rules after an update, delete it.
+
 ## Settings (`config.json`)
 | Setting | Default | |
 |---|---|---|

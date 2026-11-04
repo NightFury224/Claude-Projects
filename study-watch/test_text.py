@@ -56,4 +56,14 @@ assert app.recent_notes() == ["b", "c", "d", "e"]
 for shot in ["img1", "img2", "img3"]:
     app.remember("", shot)
 assert app.recent_images() == ["img2", "img3"]
+# rules.txt is created with the defaults, edits are picked up, and the reply format is always appended.
+import tempfile
+from pathlib import Path
+s.CONFIG_DIR = Path(tempfile.mkdtemp())
+s.RULES_FILE = s.CONFIG_DIR / "rules.txt"
+assert s.system_prompt().startswith(s.DEFAULT_RULES.strip()) and s.system_prompt().endswith(s.REPLY_FORMAT)
+s.RULES_FILE.write_text("Answer in French.", encoding="utf-8")
+assert s.system_prompt() == "Answer in French.\n\n" + s.REPLY_FORMAT
+s.RULES_FILE.write_text("  ", encoding="utf-8")  # emptied file falls back to the defaults
+assert s.load_rules() == s.DEFAULT_RULES.strip()
 print("ok")
