@@ -4,14 +4,17 @@
 // How the answer is shown:
 //   SIGNAL_ZONES   one light zone per option; the right zone lights up (kids stand on zones)
 //   SIGNAL_COUNT   the whole strip is one bulb that blinks N times: A = 1 blink, B = 2 … (0 = no answer)
-//   SIGNAL_BINARY  the whole strip is one bulb sending N in binary, one bit per time slot
+//   SIGNAL_BINARY  the whole strip is one bulb showing N in binary: one flash per bit, white = 1, blue = 0
 #define SIGNAL_ZONES 0
 #define SIGNAL_COUNT 1
 #define SIGNAL_BINARY 2
 #define SIGNAL_MODE SIGNAL_BINARY
 
 #define BITS 3               // binary: bits per answer. 3 bits = 0–7 (no answer, A–G); 4 bits = 0–15
-#define SLOT_MS 1000         // binary and counting: length of one time slot. Shorter = faster but harder to read
+#define SLOT_MS 1000         // binary and counting: how long each flash stays on
+#define GAP_MS 500           // dark gap between flashes
+#define ONE_COLOR rgb(255, 255, 255)  // binary 1, and every blink when counting: bright white
+#define ZERO_COLOR rgb(0, 0, 90)      // binary 0: dim blue, so a 0 is still a visible light
 
 #define NUM_ZONES 5          // zones mode: answer options (4 = A–D, 5 = A–E, up to 8). Other modes: any split
 #define LEDS_PER_ZONE 10     // LEDs in each zone's strip piece (zones are chained A, B, C, …)

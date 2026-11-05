@@ -84,11 +84,16 @@ void celebrate(int zone) {
 void animate() {
   unsigned long t = millis() - modeSince;
   switch (mode) {
-    case IDLE:  // gentle white breathing: ready
-      fillAll(scale(255, 255, 255, 0.25 * breathe(4000)));
+    case IDLE:  // zones: gentle white breathing. Teaching modes: dark, so only the answer is ever shown
+      fillAll(signalMode == SIGNAL_ZONES ? scale(255, 255, 255, 0.25 * breathe(4000)) : rgb(0, 0, 0));
       break;
 
-    case THINKING: {  // drum roll: a light chases across the zones, getting faster
+    case THINKING: {
+      if (signalMode != SIGNAL_ZONES) {  // teaching modes: stay dark while the AI works
+        fillAll(rgb(0, 0, 0));
+        if (millis() - thinkingSince > THINKING_TIMEOUT_MS) setMode(FAILED);
+        break;
+      }  // drum roll: a light chases across the zones, getting faster
       int step = (t / max(60, 260 - (int)(t / 60))) % NUM_ZONES;
       fillAll(rgb(0, 0, 0));
       fillZone(step, rgb(255, 160, 0));
@@ -131,64 +136,26 @@ void bulb(uint32_t color) {
   strip.show();
 }
 
-// "Get ready": three quick blue flashes so everyone starts watching.
-void attention() {
-  for (int i = 0; i < 3; i++) {
-    bulb(rgb(0, 60, 255));
-    beep(988, 80);
-    delay(150);
-    bulb(rgb(0, 0, 0));
-    delay(150);
-  }
-  delay(SLOT_MS / 2);
-}
-
-// Counting (unary): the bulb blinks N times. Simple to read, but slow for big numbers.
+// Counting: the bulb blinks N times (0 = no blinks). Nothing else: you narrate the rest.
 void sendCount(int value) {
-  attention();
   for (int i = 0; i < value; i++) {
-    bulb(rgb(255, 200, 120));
-    beep(1319, 120);
-    delay(SLOT_MS / 2);
+    bulb(ONE_COLOR);
+    delay(SLOT_MS);
     bulb(rgb(0, 0, 0));
-    delay(SLOT_MS / 2);
+    delay(GAP_MS);
   }
-  bulb(rgb(255, 0, 0));  // red = end of message
-  beep(440, 300);
-  delay(SLOT_MS);
-  bulb(rgb(0, 0, 0));
 }
 
-// Binary (like a real serial line): a START slot, then BITS time slots, most significant bit first.
-// ON for the whole slot = 1, OFF = 0. A dim blue tick (and a click) marks the start of every slot,
-// so a run of zeros can still be counted: that tick is the "clock". Then a red STOP slot.
-// Afterwards the strip splits into BITS segments showing all the bits at once ("parallel").
+// Binary: one flash per bit, most significant first. Every bit is a light that is ON, so a 0 is never
+// confused with "off": 1 = bright white, 0 = dim blue. Dark only ever means "between bits" or "done".
+// B = 2 = 010 → blue, white, blue.
 void sendBinary(int value) {
-  attention();
-  bulb(rgb(0, 60, 255));  // START
-  beep(988, 150);
-  delay(SLOT_MS);
   for (int bit = BITS - 1; bit >= 0; bit--) {
-    bool one = (value >> bit) & 1;
-    bulb(rgb(0, 0, 40));  // clock tick
-    beep(one ? 1568 : 330, 60);
-    delay(120);
-    bulb(one ? rgb(255, 200, 120) : rgb(0, 0, 0));
-    delay(SLOT_MS - 120);
+    bulb((value >> bit) & 1 ? ONE_COLOR : ZERO_COLOR);
+    delay(SLOT_MS);
+    bulb(rgb(0, 0, 0));
+    delay(GAP_MS);
   }
-  bulb(rgb(255, 0, 0));  // STOP
-  beep(440, 300);
-  delay(SLOT_MS);
-
-  // Parallel recap: segment per bit, left = most significant. Bright = 1, faint = 0.
-  strip.clear();
-  int segment = TOTAL_LEDS / BITS;
-  for (int bit = BITS - 1, s = 0; bit >= 0; bit--, s++) {
-    bool one = (value >> bit) & 1;
-    for (int i = s * segment; i < (s + 1) * segment - 1; i++)  // last LED of a segment stays dark: a gap
-      strip.setPixelColor(i, one ? rgb(255, 200, 120) : rgb(10, 10, 25));
-  }
-  strip.show();
 }
 
 // Sends one answer as a number in the chosen signal mode.
@@ -260,8 +227,10 @@ void handleMessage(String message) {
       if ((c >= 'A' && c <= 'Z') || c == '-') reveal += c;
     }
     if (reveal.length() == 0) return;
-    beep(880, 150);  // end of the drum roll
-    delay(250);
+    if (signalMode == SIGNAL_ZONES) {
+      beep(880, 150);  // end of the drum roll
+      delay(250);
+    }
     shownZone = -1;
     showNextLetter();
   }
