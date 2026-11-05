@@ -35,6 +35,11 @@ jobs:
           arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32S3 --export-binaries --output-dir build-s3 quiz-lights/quiz_lights
           cp build-s3/quiz_lights.ino.merged.bin QuizLights-xiao-esp32s3.bin
 
+      - name: Compile the ESP32-C3 Super Mini version
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --export-binaries --output-dir build-c3 quiz-lights/quiz_lights_c3
+          cp build-c3/quiz_lights_c3.ino.merged.bin QuizLights-esp32c3-supermini.bin
+
       - uses: actions/upload-artifact@v4
         with:
           name: QuizLights-firmware
