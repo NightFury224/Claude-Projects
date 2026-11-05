@@ -968,6 +968,9 @@ def main():
         app.config["lights"] = not app.config.get("lights")
         save_config(app.config)
 
+    def lights_mode(mode):
+        threading.Thread(target=app.watch.lights, args=(f"mode {mode}",), daemon=True).start()
+
     def test_lights(icon, item):
         def run():
             app.watch.lights("thinking")
@@ -995,6 +998,11 @@ def main():
         pystray.MenuItem("Reload settings", reload_settings),
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
         pystray.MenuItem("Test quiz lights", test_lights, enabled=lambda item: app.config.get("lights")),
+        pystray.MenuItem("Quiz lights mode", pystray.Menu(
+            pystray.MenuItem("Zones (stand on A, B, C…)", lambda icon, item: lights_mode("zones")),
+            pystray.MenuItem("Counting (B = 2 blinks)", lambda icon, item: lights_mode("count")),
+            pystray.MenuItem("Binary (B = 010)", lambda icon, item: lights_mode("binary")),
+        ), enabled=lambda item: app.config.get("lights")),
         pystray.MenuItem("Use Windows Graphics Capture", toggle_wgc,
                          checked=lambda item: app.config.get("capture") == "wgc"),
         pystray.MenuItem("Start with Windows", toggle_startup, checked=lambda item: starts_with_windows()),

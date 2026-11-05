@@ -26,6 +26,7 @@ Preferences prefs;
 WiFiClient client;
 
 String topic;
+int signalMode = SIGNAL_MODE;  // can be switched with a short BOOT press or a "MODE …" message
 unsigned long lastData = 0;      // last byte from ntfy, including keepalives
 unsigned long thinkingSince = 0; // 0 = not thinking
 
@@ -120,13 +121,99 @@ void animate() {
   strip.show();
 }
 
-// Reveals the next letter in [reveal]; "-" (a question with no option letter) is skipped.
+// ------------------------------------------------------------------ one-bulb signalling (teaching modes)
+// The whole strip acts as ONE bulb. Option A = 1, B = 2, C = 3 …; 0 means "no answer".
+
+const int TOTAL_LEDS = NUM_ZONES * LEDS_PER_ZONE;
+
+void bulb(uint32_t color) {
+  for (int i = 0; i < TOTAL_LEDS; i++) strip.setPixelColor(i, color);
+  strip.show();
+}
+
+// "Get ready": three quick blue flashes so everyone starts watching.
+void attention() {
+  for (int i = 0; i < 3; i++) {
+    bulb(rgb(0, 60, 255));
+    beep(988, 80);
+    delay(150);
+    bulb(rgb(0, 0, 0));
+    delay(150);
+  }
+  delay(SLOT_MS / 2);
+}
+
+// Counting (unary): the bulb blinks N times. Simple to read, but slow for big numbers.
+void sendCount(int value) {
+  attention();
+  for (int i = 0; i < value; i++) {
+    bulb(rgb(255, 200, 120));
+    beep(1319, 120);
+    delay(SLOT_MS / 2);
+    bulb(rgb(0, 0, 0));
+    delay(SLOT_MS / 2);
+  }
+  bulb(rgb(255, 0, 0));  // red = end of message
+  beep(440, 300);
+  delay(SLOT_MS);
+  bulb(rgb(0, 0, 0));
+}
+
+// Binary (like a real serial line): a START slot, then BITS time slots, most significant bit first.
+// ON for the whole slot = 1, OFF = 0. A dim blue tick (and a click) marks the start of every slot,
+// so a run of zeros can still be counted: that tick is the "clock". Then a red STOP slot.
+// Afterwards the strip splits into BITS segments showing all the bits at once ("parallel").
+void sendBinary(int value) {
+  attention();
+  bulb(rgb(0, 60, 255));  // START
+  beep(988, 150);
+  delay(SLOT_MS);
+  for (int bit = BITS - 1; bit >= 0; bit--) {
+    bool one = (value >> bit) & 1;
+    bulb(rgb(0, 0, 40));  // clock tick
+    beep(one ? 1568 : 330, 60);
+    delay(120);
+    bulb(one ? rgb(255, 200, 120) : rgb(0, 0, 0));
+    delay(SLOT_MS - 120);
+  }
+  bulb(rgb(255, 0, 0));  // STOP
+  beep(440, 300);
+  delay(SLOT_MS);
+
+  // Parallel recap: segment per bit, left = most significant. Bright = 1, faint = 0.
+  strip.clear();
+  int segment = TOTAL_LEDS / BITS;
+  for (int bit = BITS - 1, s = 0; bit >= 0; bit--, s++) {
+    bool one = (value >> bit) & 1;
+    for (int i = s * segment; i < (s + 1) * segment - 1; i++)  // last LED of a segment stays dark: a gap
+      strip.setPixelColor(i, one ? rgb(255, 200, 120) : rgb(10, 10, 25));
+  }
+  strip.show();
+}
+
+// Sends one answer as a number in the chosen signal mode.
+void sendValue(int value) {
+  if (signalMode == SIGNAL_COUNT) sendCount(value);
+  else sendBinary(value);
+}
+
+// Reveals the next letter in [reveal]. "-" (a question with no option letter) means 0 = no answer.
 void showNextLetter() {
   while (reveal.length() > 0) {
     char letter = reveal[0];
     reveal.remove(0, 1);
-    int zone = letter - 'A';
+    int value = letter == '-' ? 0 : letter - 'A' + 1;
+
+    if (signalMode != SIGNAL_ZONES) {
+      if (signalMode == SIGNAL_BINARY && value >= (1 << BITS)) value = 0;  // doesn't fit in BITS
+      sendValue(value);
+      shownZone = 0;
+      setMode(SHOWING);
+      return;
+    }
+
     if (letter == '-') continue;
+    int zone = value - 1;
     if (zone < 0 || zone >= NUM_ZONES) {
       // The answer is an option this box has no zone for (e.g. "F" with 5 zones): blink everything.
       for (int i = 0; i < 4; i++) {
@@ -153,9 +240,18 @@ void handleMessage(String message) {
     shownZone = -1;
     setMode(THINKING);
   } else if (message == "NONE") {
-    setMode(NO_OPTION);
+    if (signalMode == SIGNAL_ZONES) {
+      setMode(NO_OPTION);
+    } else {  // teaching modes: "no answer" is sent as the number 0
+      reveal = "-";
+      showNextLetter();
+    }
   } else if (message == "ERROR") {
     setMode(FAILED);
+  } else if (message.startsWith("MODE")) {
+    if (message.indexOf("ZONE") > 0) setSignalMode(SIGNAL_ZONES);
+    else if (message.indexOf("COUNT") > 0) setSignalMode(SIGNAL_COUNT);
+    else if (message.indexOf("BIN") > 0) setSignalMode(SIGNAL_BINARY);
   } else if (message == "OFF") {
     setMode(IDLE);
   } else {
@@ -190,6 +286,27 @@ void runSetupPortal(bool force) {
   if (!connected) ESP.restart();
 }
 
+// Shows which mode is active: 1 flash = zones, 2 = counting, 3 = binary (purple).
+void showSignalMode() {
+  for (int i = 0; i <= signalMode; i++) {
+    fillAll(rgb(150, 0, 255));
+    strip.show();
+    beep(1175, 100);
+    delay(250);
+    fillAll(rgb(0, 0, 0));
+    strip.show();
+    delay(250);
+  }
+}
+
+void setSignalMode(int next) {
+  signalMode = next;
+  prefs.putInt("mode", signalMode);
+  showSignalMode();
+  setMode(IDLE);
+}
+
+// BOOT button: short press = next signal mode; hold 3 s = Wi-Fi/topic setup.
 void checkSetupButton() {
   static unsigned long pressedAt = 0;
   if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
@@ -199,6 +316,8 @@ void checkSetupButton() {
       runSetupPortal(true);
     }
   } else {
+    if (pressedAt != 0 && millis() - pressedAt > 50 && millis() - pressedAt < 1000)
+      setSignalMode((signalMode + 1) % 3);
     pressedAt = 0;
   }
 }
@@ -251,6 +370,7 @@ void setup() {
 
   prefs.begin("quizlights", false);
   topic = prefs.getString("topic", "");
+  signalMode = prefs.getInt("mode", SIGNAL_MODE);
   runSetupPortal(topic.length() == 0);  // first start: always ask for the topic
   WiFi.setSleep(false);                 // faster reaction; the box runs from mains power
   setMode(OFFLINE);

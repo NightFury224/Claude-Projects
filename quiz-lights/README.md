@@ -1,6 +1,6 @@
 # Quiz Lights
 
-A classroom game for Study Watch. Project a question, the kids stand on the zone they think is right (A, B, C, …), and you tap **Right Ctrl** on the laptop. The lights play a drum roll while the AI works, then the correct zone flashes green, and everyone on it cheers.
+A classroom game and a lesson in how light carries information, for Study Watch. Project a question, the kids stand on the zone they think is right (A, B, C, …), and you tap **Right Ctrl** on the laptop. The lights play a drum roll while the AI works, then the correct zone flashes green, and everyone on it cheers.
 
 ```
 Right Ctrl → laptop (Study Watch) → AI → ntfy → ESP32 box → light zone A / B / C / D / E
@@ -22,6 +22,44 @@ Right Ctrl → laptop (Study Watch) → AI → ntfy → ESP32 box → light zone
 | All blue | Setup mode (see below) |
 
 The AI is usually right, but not always. Since the reveal is instant, glance at your phone's notification if an answer looks surprising.
+
+## Teaching modes: one bulb carrying information
+Switch modes from the laptop (tray → **Quiz lights mode**) or with a **short press of the box's BOOT button**. The box flashes purple 1, 2 or 3 times to show the mode. The mode is remembered when the box is switched off.
+
+In the two teaching modes the **whole strip acts as one bulb**. Options become numbers: **0 = no answer, A = 1, B = 2, C = 3 …**
+
+**Counting (unary)**
+- Three quick blue flashes mean "get ready". Then the bulb blinks **once per unit**: B = 2 blinks, E = 5 blinks. Red means "end of message".
+- Easy to read, but slow: option G needs 7 blinks, and a number like 100 would need 100.
+
+**Binary**
+- Blue flashes ("get ready"), then a blue **START** slot.
+- Then **3 time slots** of 1 second each, most significant bit first. **Light on for the slot = 1, off = 0.**
+- At the start of every slot there's a tiny dim-blue tick and a click: that's the **clock**. Without it, nobody could tell "0 0" from "0" in the dark.
+- A red **STOP** slot ends the message.
+- Then the strip splits into 3 segments showing all the bits at once, so the class can check their reading.
+
+| Answer | Number | Binary | Counting blinks |
+|---|---|---|---|
+| no answer | 0 | 000 | 0 |
+| A | 1 | 001 | 1 |
+| B | 2 | 010 | 2 |
+| C | 3 | 011 | 3 |
+| D | 4 | 100 | 4 |
+| E | 5 | 101 | 5 |
+| F | 6 | 110 | 6 |
+| G | 7 | 111 | 7 |
+
+**Talking points for the class:**
+- **Why binary wins:** 3 slots always carry any of 8 values, while counting needs up to 7 blinks. 10 slots carry 1,024 values; counting to 1,000 would take 1,000 blinks. Each extra slot **doubles** what you can send.
+- **Why the clock and START matter:** "off" is information too (a 0), but only if everyone agrees when each slot begins. Real serial cables (UART), infrared remotes and fibre optics work the same way: start bit, data bits, stop bit, agreed timing.
+- **Serial vs parallel:** during transmission the bits arrive **one after another on one bulb** (serial). The recap shows them **side by side on three lights** (parallel): faster, but it needs more wires.
+- **Activity:** each kid writes down the bits as they see them, converts to a number, then to a letter, and stands on that option before the recap appears.
+
+Settings in `config.h`:
+- `BITS`: 3 gives 0–7; use 4 if your quiz has more than 7 options.
+- `SLOT_MS`: the slot length. Start at 1000 ms and speed up once the class gets good at it, to show how speed and readability trade off.
+- `SIGNAL_MODE`: the mode used on first start.
 
 ---
 
