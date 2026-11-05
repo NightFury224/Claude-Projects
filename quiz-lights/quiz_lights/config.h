@@ -1,6 +1,17 @@
 // Quiz Lights hardware settings. Change these to match your build, then upload again.
 #pragma once
 
+// What you're lighting:
+//   SINGLE_BULB 1  one plain bulb or LED, switched on/off from BULB_PIN (no colours). Binary then uses
+//                  flash LENGTH: long = 1, short = 0. Zones mode isn't available.
+//   SINGLE_BULB 0  a WS2812B LED strip on LED_PIN (colours, zones).
+#define SINGLE_BULB 1
+#define BULB_PIN 4           // single bulb: through a resistor (LED) or a transistor/MOSFET/relay module
+#define BULB_ACTIVE_HIGH true  // false for relay modules that switch on when the pin is LOW
+#define STATUS_LED_PIN 2     // the board's built-in LED shows status, so the bulb only shows answers
+#define LONG_MS 1200         // single bulb, binary: a 1 is a long flash
+#define SHORT_MS 300         // single bulb, binary: a 0 is a short flash
+
 // How the answer is shown:
 //   SIGNAL_ZONES   one light zone per option; the right zone lights up (kids stand on zones)
 //   SIGNAL_COUNT   the whole strip is one bulb that blinks N times: A = 1 blink, B = 2 … (0 = no answer)

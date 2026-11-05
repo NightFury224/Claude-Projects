@@ -83,6 +83,18 @@ void celebrate(int zone) {
 // Called repeatedly from loop(): draws the current mode's animation.
 void animate() {
   unsigned long t = millis() - modeSince;
+#if SINGLE_BULB
+  // One bulb: it only ever shows answers. Status goes to the board's small built-in LED instead.
+  bool status = false;
+  if (mode == OFFLINE) status = (millis() / 800) % 2;          // slow blink: no connection
+  else if (mode == THINKING) status = true;                     // solid: the AI is working
+  else if (mode == FAILED) status = (millis() / 150) % 2;       // fast blink: failed, tap again
+  digitalWrite(STATUS_LED_PIN, status ? HIGH : LOW);
+  if (mode == THINKING && millis() - thinkingSince > THINKING_TIMEOUT_MS) setMode(FAILED);
+  if (mode == FAILED && t > 6000) setMode(IDLE);
+  if (mode == SHOWING && reveal.length() > 0 && t > REVEAL_HOLD_MS) showNextLetter();
+  return;
+#endif
   switch (mode) {
     case IDLE:  // zones: gentle white breathing. Teaching modes: dark, so only the answer is ever shown
       fillAll(signalMode == SIGNAL_ZONES ? scale(255, 255, 255, 0.25 * breathe(4000)) : rgb(0, 0, 0));
@@ -132,8 +144,12 @@ void animate() {
 const int TOTAL_LEDS = NUM_ZONES * LEDS_PER_ZONE;
 
 void bulb(uint32_t color) {
+#if SINGLE_BULB
+  digitalWrite(BULB_PIN, (color != 0) == BULB_ACTIVE_HIGH ? HIGH : LOW);  // any colour = on
+#else
   for (int i = 0; i < TOTAL_LEDS; i++) strip.setPixelColor(i, color);
   strip.show();
+#endif
 }
 
 // Counting: the bulb blinks N times (0 = no blinks). Nothing else: you narrate the rest.
@@ -146,10 +162,25 @@ void sendCount(int value) {
   }
 }
 
+// Binary on a plain on/off bulb (no colours): the LENGTH of each flash is the bit, like Morse code.
+// Long flash = 1, short flash = 0. Both are ON, so a 0 is never just darkness.
+void sendBinaryByLength(int value) {
+  for (int bit = BITS - 1; bit >= 0; bit--) {
+    bulb(ONE_COLOR);
+    delay((value >> bit) & 1 ? LONG_MS : SHORT_MS);
+    bulb(0);
+    delay(GAP_MS);
+  }
+}
+
 // Binary: one flash per bit, most significant first. Every bit is a light that is ON, so a 0 is never
 // confused with "off": 1 = bright white, 0 = dim blue. Dark only ever means "between bits" or "done".
 // B = 2 = 010 → blue, white, blue.
 void sendBinary(int value) {
+  if (SINGLE_BULB) {
+    sendBinaryByLength(value);
+    return;
+  }
   for (int bit = BITS - 1; bit >= 0; bit--) {
     bulb((value >> bit) & 1 ? ONE_COLOR : ZERO_COLOR);
     delay(SLOT_MS);
@@ -216,7 +247,7 @@ void handleMessage(String message) {
   } else if (message == "ERROR") {
     setMode(FAILED);
   } else if (message.startsWith("MODE")) {
-    if (message.indexOf("ZONE") > 0) setSignalMode(SIGNAL_ZONES);
+    if (message.indexOf("ZONE") > 0 && !SINGLE_BULB) setSignalMode(SIGNAL_ZONES);
     else if (message.indexOf("COUNT") > 0) setSignalMode(SIGNAL_COUNT);
     else if (message.indexOf("BIN") > 0) setSignalMode(SIGNAL_BINARY);
   } else if (message == "OFF") {
@@ -257,6 +288,15 @@ void runSetupPortal(bool force) {
 
 // Shows which mode is active: 1 flash = zones, 2 = counting, 3 = binary (purple).
 void showSignalMode() {
+#if SINGLE_BULB
+  for (int i = 0; i < signalMode; i++) {  // built-in LED: 1 blink = counting, 2 = binary
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    delay(250);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delay(250);
+  }
+  return;
+#endif
   for (int i = 0; i <= signalMode; i++) {
     fillAll(rgb(150, 0, 255));
     strip.show();
@@ -286,7 +326,8 @@ void checkSetupButton() {
     }
   } else {
     if (pressedAt != 0 && millis() - pressedAt > 50 && millis() - pressedAt < 1000)
-      setSignalMode((signalMode + 1) % 3);
+      setSignalMode(SINGLE_BULB ? (signalMode == SIGNAL_BINARY ? SIGNAL_COUNT : SIGNAL_BINARY)
+                                : (signalMode + 1) % 3);
     pressedAt = 0;
   }
 }
@@ -336,10 +377,14 @@ void setup() {
   strip.begin();
   strip.setBrightness(BRIGHTNESS);
   strip.show();
+  pinMode(BULB_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  bulb(0);
 
   prefs.begin("quizlights", false);
   topic = prefs.getString("topic", "");
   signalMode = prefs.getInt("mode", SIGNAL_MODE);
+  if (SINGLE_BULB && signalMode == SIGNAL_ZONES) signalMode = SIGNAL_BINARY;  // zones need a strip
   runSetupPortal(topic.length() == 0);  // first start: always ask for the topic
   WiFi.setSleep(false);                 // faster reaction; the box runs from mains power
   setMode(OFFLINE);

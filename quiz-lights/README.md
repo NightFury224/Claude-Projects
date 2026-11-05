@@ -56,6 +56,33 @@ Settings in `config.h`:
 - `ONE_COLOR` / `ZERO_COLOR`: the colours for 1 and 0.
 - `SIGNAL_MODE`: the mode used on first start.
 
+## One plain bulb (the default build)
+`config.h` ships with `SINGLE_BULB 1`: one ordinary on/off bulb or LED on **GPIO 4**. A plain bulb has no colours, so binary uses **flash length** instead, like Morse code:
+
+- **1 = long flash** (1.2 s), **0 = short flash** (0.3 s), with a dark gap between flashes.
+- A 0 is still a flash that's **on**, so it's never confused with "off". Dark only means "between bits" or "finished".
+- Example: B = 2 = 010 → short, **long**, short.
+
+| Answer | Binary | What the bulb shows |
+|---|---|---|
+| no answer | 000 | · · · |
+| A | 001 | · · ▬ |
+| B | 010 | · ▬ · |
+| C | 011 | · ▬ ▬ |
+| D | 100 | ▬ · · |
+| E | 101 | ▬ · ▬ |
+
+Counting works the same as above (B = 2 blinks). Zones mode needs a strip, so with one bulb the BOOT button switches only between **counting** and **binary**.
+
+**The bulb only ever shows answers.** Status goes to the ESP32's small built-in LED: slow blink = no internet, solid = AI working, fast blink = failed. On a mode change it blinks 1× for counting, 2× for binary.
+
+**Wiring the bulb:**
+- **A single LED:** GPIO 4 → 220 Ω resistor → LED long leg; short leg → GND.
+- **A brighter bulb (5–12 V LED bulb or lamp):** use a logic-level MOSFET module (e.g. IRLZ44N) or a transistor module driven from GPIO 4, powered by the bulb's own supply, grounds connected.
+- **A mains (230 V) bulb:** only through a ready-made **relay module** in a closed box, wired by someone qualified. Many relay modules switch on when the pin is LOW: if yours is reversed, set `BULB_ACTIVE_HIGH false`. A relay clicks on every flash, which kids can also hear. An LED or 12 V bulb is safer and flashes more crisply.
+
+Settings: `LONG_MS` / `SHORT_MS` / `GAP_MS` set the flash lengths. To use an LED strip instead, set `SINGLE_BULB 0`.
+
 ---
 
 ## Parts (about ₹1,600–2,500)
