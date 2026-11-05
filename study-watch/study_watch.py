@@ -45,6 +45,7 @@ DEFAULTS = {
     "save_screenshots": True,
     "ready_message": True,
     "lights": False,
+    "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
 }
 
 DEFAULT_RULES = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
@@ -527,6 +528,79 @@ class Claude:
         ], max_tokens=8000, skip=skip)  # room for thinking models; only the short fields are shown  # room for the private working (and thinking models); only short fields are shown
 
 
+# ---------------------------------------------------------------- quiz lights over Bluetooth
+
+LIGHTS_SERVICE = "7a3c0001-5f1e-4e8a-9b6d-2c4f1e0b7a10"
+LIGHTS_CHAR = "7a3c0002-5f1e-4e8a-9b6d-2c4f1e0b7a10"
+
+
+class BleLights:
+    """Keeps a Bluetooth Low Energy link to the quiz-lights box (advertised as "QuizLights") and
+    reconnects by itself. Messages are the same text as over Wi-Fi: "B", "B,-,D", "none", "mode binary"."""
+
+    def __init__(self, wanted, on_change):
+        self.wanted = wanted          # () -> bool: only search while quiz lights over Bluetooth is on
+        self.on_change = on_change    # called with True/False when the link comes up or drops
+        self.connected = False
+        self.loop = None
+        self.queue = None
+        threading.Thread(target=self._thread, daemon=True).start()
+
+    def _set(self, connected):
+        if connected != self.connected:
+            self.connected = connected
+            self.on_change(connected)
+
+    def send(self, message):
+        """Returns False if the box isn't connected (the message is dropped, not queued for later)."""
+        if not (self.connected and self.loop):
+            return False
+        self.loop.call_soon_threadsafe(self.queue.put_nowait, message)
+        return True
+
+    def _thread(self):
+        import asyncio
+        try:
+            asyncio.run(self._main())
+        except Exception:  # noqa: BLE001
+            log_error("Bluetooth for quiz lights stopped:\n" + traceback.format_exc())
+
+    async def _main(self):
+        import asyncio
+        from bleak import BleakClient, BleakScanner
+
+        self.loop = asyncio.get_running_loop()
+        self.queue = asyncio.Queue()
+
+        def is_box(device, adv):
+            return (device.name == "QuizLights" or adv.local_name == "QuizLights"
+                    or LIGHTS_SERVICE in [u.lower() for u in adv.service_uuids])
+
+        while True:
+            if not self.wanted():
+                await asyncio.sleep(2)
+                continue
+            try:
+                device = await BleakScanner.find_device_by_filter(is_box, timeout=8)
+                if device is None:
+                    continue
+                async with BleakClient(device, timeout=15) as client:
+                    while not self.queue.empty():
+                        self.queue.get_nowait()  # nothing stale from before the link came up
+                    self._set(True)
+                    while client.is_connected and self.wanted():
+                        try:
+                            message = await asyncio.wait_for(self.queue.get(), 2)
+                        except asyncio.TimeoutError:
+                            continue
+                        await client.write_gatt_char(LIGHTS_CHAR, message.encode(), response=True)
+            except Exception:  # noqa: BLE001 - out of range, switched off, Bluetooth off: just retry
+                log_error("Quiz lights Bluetooth link:\n" + traceback.format_exc(limit=2))
+            finally:
+                self._set(False)
+            await asyncio.sleep(2)
+
+
 # ---------------------------------------------------------------- watch delivery (ntfy)
 
 class Watch:
@@ -535,6 +609,7 @@ class Watch:
 
     def __init__(self, config):
         self.config = config
+        self.ble = None  # BleLights, set up by the tray app on Windows
 
     @property
     def server(self):
@@ -551,6 +626,10 @@ class Watch:
     def lights(self, signal):
         """Tells the quiz-lights box what to show: "thinking", "B", "B,-,D", "none" or "error"."""
         if not self.config.get("lights"):
+            return
+        if self.config.get("lights_link", "bluetooth") == "bluetooth":
+            if not (self.ble and self.ble.send(signal)):
+                print(f"Quiz lights not connected over Bluetooth; skipped {signal!r}")
             return
         try:
             requests.post(f"{self.server}/{self.lights_topic}", data=signal.encode(), headers=self.headers(),
@@ -840,7 +919,7 @@ def make_icon(colour):
     return image
 
 
-ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838"}
+ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838", "nobox": "#8a4fd0"}
 MODIFIER_KEYS = {"right ctrl", "left ctrl", "right shift", "left shift", "right alt", "left alt",
                  "alt gr", "right windows", "left windows"}
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -940,7 +1019,7 @@ def main():
             app.config.clear()
             app.config.update(load_config(app.problems))
             app.claude._models = None
-            icon.icon = icons["idle"]
+            show_status("idle")
             hotkey_ok = register_hotkeys()
             # Same check as at start-up, so a fix (or a new mistake) is confirmed on the watch.
             threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
@@ -967,6 +1046,12 @@ def main():
     def toggle_lights(icon, item):
         app.config["lights"] = not app.config.get("lights")
         save_config(app.config)
+        show_status(status["state"])
+
+    def set_link(link):
+        app.config["lights_link"] = link
+        save_config(app.config)
+        show_status(status["state"])
 
     def lights_mode(mode):
         threading.Thread(target=app.watch.lights, args=(f"mode {mode}",), daemon=True).start()
@@ -998,6 +1083,13 @@ def main():
         pystray.MenuItem("Reload settings", reload_settings),
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
         pystray.MenuItem("Test quiz lights", test_lights, enabled=lambda item: app.config.get("lights")),
+        pystray.MenuItem("Quiz lights connection", pystray.Menu(
+            pystray.MenuItem("Bluetooth (laptop → box)", lambda icon, item: set_link("bluetooth"),
+                             checked=lambda item: app.config.get("lights_link", "bluetooth") == "bluetooth",
+                             radio=True),
+            pystray.MenuItem("Wi-Fi (through ntfy)", lambda icon, item: set_link("wifi"),
+                             checked=lambda item: app.config.get("lights_link") == "wifi", radio=True),
+        ), enabled=lambda item: app.config.get("lights")),
         pystray.MenuItem("Quiz lights mode", pystray.Menu(
             pystray.MenuItem("Zones (stand on A, B, C…)", lambda icon, item: lights_mode("zones")),
             pystray.MenuItem("Counting (B = 2 blinks)", lambda icon, item: lights_mode("count")),
@@ -1010,15 +1102,28 @@ def main():
         pystray.MenuItem("Quit", quit_app),
     ))
 
+    status = {"state": "idle"}
+
     def show_status(state):
+        status["state"] = state
+        title = {"idle": "Study Watch", "working": "Study Watch: working…",
+                 "error": "Study Watch: last request failed (see watch)"}[state]
+        if app.config.get("lights") and app.config.get("lights_link", "bluetooth") == "bluetooth":
+            box = app.watch.ble is not None and app.watch.ble.connected
+            title += " · light box: " + ("connected" if box else "not connected (searching…)")
+            if state == "idle" and not box:
+                state = "nobox"
         icon.icon = icons[state]
-        icon.title = {"idle": "Study Watch", "working": "Study Watch: working…",
-                      "error": "Study Watch: last request failed (see watch)"}[state]
+        icon.title = title
 
     app.status_callback = show_status
+    app.watch.ble = BleLights(
+        lambda: bool(app.config.get("lights")) and app.config.get("lights_link", "bluetooth") == "bluetooth",
+        lambda connected: show_status(status["state"]))
     hotkey_ok = register_hotkeys()
     threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
     threading.Thread(target=app.watch.listen, args=(app.handle_command, app.stop), daemon=True).start()
+    show_status("idle")
     if not app.config["openrouter_key"]:
         icon.icon = icons["error"]
         os.startfile(CONFIG_FILE)

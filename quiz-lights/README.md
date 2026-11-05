@@ -56,6 +56,16 @@ Settings in `config.h`:
 - `ONE_COLOR` / `ZERO_COLOR`: the colours for 1 and 0.
 - `SIGNAL_MODE`: the mode used on first start.
 
+## Bluetooth (ESP32-C3 Super Mini)
+`quiz_lights_c3_ble/` is a version with no Wi-Fi at all: Study Watch on the laptop connects straight to the board over Bluetooth Low Energy. There's no setup: no topic, no hotspot, no portal.
+
+1. Upload `quiz_lights_c3_ble.ino` (board **ESP32C3 Dev Module**, **USB CDC On Boot: Enabled**), or flash **QuizLights-esp32c3-bluetooth.bin** at `0x0`.
+2. Make sure the laptop's Bluetooth is on. You don't pair it in Windows settings; Study Watch finds the box by itself.
+3. In the Study Watch tray menu, tick **Quiz lights** and check **Quiz lights connection → Bluetooth**.
+4. The tray icon shows the link: 🔵 box connected, 🟣 box not connected (Study Watch keeps searching), 🟠 AI working, 🔴 failed. Hover over it for the details.
+
+Range is about 10 m. The laptop still needs internet for the AI.
+
 ## One plain bulb (the default build)
 `config.h` ships with `SINGLE_BULB 1`: one ordinary on/off bulb or LED on **GPIO 4**. A plain bulb has no colours, so binary uses **flash length** instead, like Morse code:
 

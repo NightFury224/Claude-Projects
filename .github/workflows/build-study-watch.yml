@@ -27,7 +27,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Build StudyWatch.exe
-        run: pyinstaller --onefile --noconsole --name StudyWatch study_watch.py
+        run: pyinstaller --onefile --noconsole --name StudyWatch --collect-all bleak --collect-submodules winrt study_watch.py
 
       - name: Check the text helpers and imports
         run: |
