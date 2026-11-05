@@ -6,9 +6,17 @@
 //                  flash LENGTH: long = 1, short = 0. Zones mode isn't available.
 //   SINGLE_BULB 0  a WS2812B LED strip on LED_PIN (colours, zones).
 #define SINGLE_BULB 1
+#if defined(ARDUINO_XIAO_ESP32S3)
+// Seeed XIAO ESP32S3: its orange user LED (GPIO 21, on when LOW) is the bulb, so you can test with
+// no wiring. It has no second LED, so status isn't shown. For a real bulb, use pin D0 (GPIO 1).
+#define BULB_PIN 21
+#define BULB_ACTIVE_HIGH false
+#define STATUS_LED_PIN -1
+#else
 #define BULB_PIN 4           // single bulb: through a resistor (LED) or a transistor/MOSFET/relay module
 #define BULB_ACTIVE_HIGH true  // false for relay modules that switch on when the pin is LOW
-#define STATUS_LED_PIN 2     // the board's built-in LED shows status, so the bulb only shows answers
+#define STATUS_LED_PIN 2     // the board's built-in LED shows status, so the bulb only shows answers; -1 for none
+#endif
 #define LONG_MS 1200         // single bulb, binary: a 1 is a long flash
 #define SHORT_MS 300         // single bulb, binary: a 0 is a short flash
 

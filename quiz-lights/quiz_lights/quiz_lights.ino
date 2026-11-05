@@ -89,7 +89,7 @@ void animate() {
   if (mode == OFFLINE) status = (millis() / 800) % 2;          // slow blink: no connection
   else if (mode == THINKING) status = true;                     // solid: the AI is working
   else if (mode == FAILED) status = (millis() / 150) % 2;       // fast blink: failed, tap again
-  digitalWrite(STATUS_LED_PIN, status ? HIGH : LOW);
+  statusLed(status);
   if (mode == THINKING && millis() - thinkingSince > THINKING_TIMEOUT_MS) setMode(FAILED);
   if (mode == FAILED && t > 6000) setMode(IDLE);
   if (mode == SHOWING && reveal.length() > 0 && t > REVEAL_HOLD_MS) showNextLetter();
@@ -142,6 +142,10 @@ void animate() {
 // The whole strip acts as ONE bulb. Option A = 1, B = 2, C = 3 …; 0 means "no answer".
 
 const int TOTAL_LEDS = NUM_ZONES * LEDS_PER_ZONE;
+
+void statusLed(bool on) {
+  if (STATUS_LED_PIN >= 0) digitalWrite(STATUS_LED_PIN, on ? HIGH : LOW);
+}
 
 void bulb(uint32_t color) {
 #if SINGLE_BULB
@@ -290,9 +294,9 @@ void runSetupPortal(bool force) {
 void showSignalMode() {
 #if SINGLE_BULB
   for (int i = 0; i < signalMode; i++) {  // built-in LED: 1 blink = counting, 2 = binary
-    digitalWrite(STATUS_LED_PIN, HIGH);
+    statusLed(true);
     delay(250);
-    digitalWrite(STATUS_LED_PIN, LOW);
+    statusLed(false);
     delay(250);
   }
   return;
@@ -378,7 +382,7 @@ void setup() {
   strip.setBrightness(BRIGHTNESS);
   strip.show();
   pinMode(BULB_PIN, OUTPUT);
-  pinMode(STATUS_LED_PIN, OUTPUT);
+  if (STATUS_LED_PIN >= 0) pinMode(STATUS_LED_PIN, OUTPUT);
   bulb(0);
 
   prefs.begin("quizlights", false);

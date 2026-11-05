@@ -30,10 +30,15 @@ jobs:
           cp build/quiz_lights.ino.merged.bin QuizLights-esp32.bin
           ls -l build QuizLights-esp32.bin
 
+      - name: Compile for the Seeed XIAO ESP32S3
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32S3 --export-binaries --output-dir build-s3 quiz-lights/quiz_lights
+          cp build-s3/quiz_lights.ino.merged.bin QuizLights-xiao-esp32s3.bin
+
       - uses: actions/upload-artifact@v4
         with:
           name: QuizLights-firmware
-          path: QuizLights-esp32.bin
+          path: QuizLights-*.bin
 
       - name: Publish to the "quiz-lights-latest" release
         uses: softprops/action-gh-release@v2
@@ -41,6 +46,6 @@ jobs:
           tag_name: quiz-lights-latest
           name: Quiz Lights (latest ESP32 firmware)
           target_commitish: ${{ github.sha }}
-          body: "QuizLights-esp32.bin is the complete firmware for a standard ESP32 dev board (flash at offset 0x0). Built from ${{ github.sha }}."
-          files: QuizLights-esp32.bin
+          body: "QuizLights-esp32.bin is the complete firmware for a standard ESP32 dev board; QuizLights-xiao-esp32s3.bin is for the Seeed XIAO ESP32S3. Flash either at offset 0x0. Built from ${{ github.sha }}."
+          files: QuizLights-*.bin
           make_latest: false

@@ -81,6 +81,8 @@ Counting works the same as above (B = 2 blinks). Zones mode needs a strip, so wi
 - **A brighter bulb (5–12 V LED bulb or lamp):** use a logic-level MOSFET module (e.g. IRLZ44N) or a transistor module driven from GPIO 4, powered by the bulb's own supply, grounds connected.
 - **A mains (230 V) bulb:** only through a ready-made **relay module** in a closed box, wired by someone qualified. Many relay modules switch on when the pin is LOW: if yours is reversed, set `BULB_ACTIVE_HIGH false`. A relay clicks on every flash, which kids can also hear. An LED or 12 V bulb is safer and flashes more crisply.
 
+**Testing on a Seeed XIAO ESP32S3:** flash **QuizLights-xiao-esp32s3.bin** instead. The board's small **orange LED** is the bulb, so you can test with no wiring at all. The board has no second LED, so status (thinking, no Wi-Fi) isn't shown during the test. For a real bulb, rebuild with `BULB_PIN 1` (pin D0). To flash: hold **B** (BOOT), plug in USB, then release it.
+
 Settings: `LONG_MS` / `SHORT_MS` / `GAP_MS` set the flash lengths. To use an LED strip instead, set `SINGLE_BULB 0`.
 
 ---
