@@ -114,6 +114,9 @@ After editing, use tray → **Reload settings**.
 - Screenshots go to OpenRouter and on to Anthropic.
 - Answers pass through the ntfy.sh server. Anyone who knows the random topic name could read them, so don't share it. For more privacy, reserve the topic with an ntfy account and put its token in `ntfy_token`, or run your own ntfy server.
 
+## Quiz lights (classroom game)
+Tray → **Quiz lights** sends each answer's option letter to an ESP32 light box, which lights the matching floor zone. See [`quiz-lights/README.md`](../quiz-lights/README.md).
+
 ## Start-up check
 Every time Study Watch starts (and after **Reload settings**), it checks the whole chain: your OpenRouter key, ntfy, phone and watch. Then it sends one notification:
 - **✅ Study Watch ready.** Everything works. If this arrives on your watch, you're set for the session.

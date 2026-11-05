@@ -44,6 +44,7 @@ DEFAULTS = {
     "ntfy_token": "",
     "save_screenshots": True,
     "ready_message": True,
+    "lights": False,
 }
 
 DEFAULT_RULES = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
@@ -251,6 +252,17 @@ def is_placeholder(text):
 def real_answer(answer):
     """A model that is stuck sometimes returns "..." as the answer; say so instead of showing dots."""
     return "No answer: the model couldn't work it out. Try again." if is_placeholder(answer) else answer
+
+
+def option_letters(answer):
+    """The option letter of each answer, in order: "Q1: B) 27 · Q2: 39°C · Q3: D) x" → ["B", "-", "D"].
+    "-" marks a question without an option letter. Lone letters ("B") count too."""
+    letters = []
+    for part in answer.split(" · "):
+        part = re.sub(r"^\s*Q\d+\s*:\s*", "", part.strip())
+        found = re.match(r"\(?([A-Za-z])\)", part) or re.fullmatch(r"([A-Za-z])\.?", part)
+        letters.append(found.group(1).upper() if found else "-")
+    return letters
 
 
 def split_text(text, size):
@@ -532,6 +544,20 @@ class Watch:
     def control_topic(self):
         return self.config["ntfy_topic"] + "-ctl"
 
+    @property
+    def lights_topic(self):
+        return self.config["ntfy_topic"] + "-lights"
+
+    def lights(self, signal):
+        """Tells the quiz-lights box what to show: "thinking", "B", "B,-,D", "none" or "error"."""
+        if not self.config.get("lights"):
+            return
+        try:
+            requests.post(f"{self.server}/{self.lights_topic}", data=signal.encode(), headers=self.headers(),
+                          timeout=10).raise_for_status()
+        except requests.RequestException:
+            log_error(f"Couldn't reach the quiz lights ({signal}):\n" + traceback.format_exc())
+
     def headers(self):
         token = self.config.get("ntfy_token", "").strip()
         return {"Authorization": f"Bearer {token}"} if token else {}
@@ -605,6 +631,7 @@ class StudyWatch:
                 return
             self.set_status("working")
             started = time.time()
+            threading.Thread(target=self.watch.lights, args=("thinking",), daemon=True).start()  # drum roll
             current = to_jpeg_base64(image)
             notes, earlier = self.recent_notes(), self.recent_images()
 
@@ -629,6 +656,8 @@ class StudyWatch:
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
+            letters = option_letters(result["answer"])
+            self.watch.lights(",".join(letters) if any(l != "-" for l in letters) else "none")
             self.send_overview()
             self.set_status("idle")
             self.log_jobs.put(lambda: self.write_log(log_path, image, result, session_id))
@@ -636,6 +665,7 @@ class StudyWatch:
         except Exception as error:  # noqa: BLE001 - anything that goes wrong should reach the watch
             log_error(traceback.format_exc())
             self.set_status("error")
+            self.watch.lights("error")
             try:
                 self.watch.send("⚠️ Study Watch", str(error)[:500], priority=3)
             except requests.RequestException:
@@ -934,6 +964,17 @@ def main():
         app.config["capture"] = "gdi" if app.config.get("capture") == "wgc" else "wgc"
         save_config(app.config)
 
+    def toggle_lights(icon, item):
+        app.config["lights"] = not app.config.get("lights")
+        save_config(app.config)
+
+    def test_lights(icon, item):
+        def run():
+            app.watch.lights("thinking")
+            time.sleep(4)
+            app.watch.lights(secrets.choice("ABCD"))
+        threading.Thread(target=run, daemon=True).start()
+
     def toggle_startup(icon, item):
         set_start_with_windows(not starts_with_windows())
 
@@ -952,6 +993,8 @@ def main():
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),
         pystray.MenuItem("Edit AI rules", edit_rules),
         pystray.MenuItem("Reload settings", reload_settings),
+        pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
+        pystray.MenuItem("Test quiz lights", test_lights, enabled=lambda item: app.config.get("lights")),
         pystray.MenuItem("Use Windows Graphics Capture", toggle_wgc,
                          checked=lambda item: app.config.get("capture") == "wgc"),
         pystray.MenuItem("Start with Windows", toggle_startup, checked=lambda item: starts_with_windows()),

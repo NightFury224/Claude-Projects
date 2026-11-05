@@ -82,4 +82,9 @@ s.CONFIG_FILE.write_text('{"openrouter_key": "k", "ntfy_topic": "t", "capture": 
 problems = []
 config = s.load_config(problems)
 assert config["capture"] == "gdi" and config["save_screenshots"] is True and len(problems) == 2, problems
+# Option letters for the quiz lights.
+assert s.option_letters("B) 27") == ["B"]
+assert s.option_letters("Q1: B) 27 · Q2: 39°C · Q3: d) True") == ["B", "-", "D"]
+assert s.option_letters("(C) Paris") == ["C"] and s.option_letters("E") == ["E"]
+assert s.option_letters("Rs. 6057") == ["-"]
 print("ok")

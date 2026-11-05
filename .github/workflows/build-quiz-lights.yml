@@ -1,0 +1,46 @@
+name: Build Quiz Lights (ESP32)
+
+on:
+  push:
+    paths:
+      - "quiz-lights/**"
+      - ".github/workflows/build-quiz-lights.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install the ESP32 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.0.7 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "Adafruit NeoPixel@1.12.3" "WiFiManager@2.0.17"
+
+      - name: Compile for a standard ESP32 dev board
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32 --export-binaries --output-dir build quiz-lights/quiz_lights
+          cp build/quiz_lights.ino.merged.bin QuizLights-esp32.bin
+          ls -l build QuizLights-esp32.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuizLights-firmware
+          path: QuizLights-esp32.bin
+
+      - name: Publish to the "quiz-lights-latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: quiz-lights-latest
+          name: Quiz Lights (latest ESP32 firmware)
+          target_commitish: ${{ github.sha }}
+          body: "QuizLights-esp32.bin is the complete firmware for a standard ESP32 dev board (flash at offset 0x0). Built from ${{ github.sha }}."
+          files: QuizLights-esp32.bin
+          make_latest: false
