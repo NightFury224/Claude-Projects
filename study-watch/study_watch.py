@@ -829,7 +829,12 @@ class StudyWatch:
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
             letters = lights_letters(result)
-            self.watch.lights(",".join(letters) if any(l != "-" for l in letters) else "none")
+            if any(l != "-" for l in letters):
+                self.watch.lights(",".join(letters))
+            elif "unfinished question" in result["context"].lower():
+                pass  # its options are on the next screen: the lights wait for that answer instead of showing 0
+            else:
+                self.watch.lights("none")
             self.send_overview()
             self.set_status("idle")
             self.log_jobs.put(lambda: self.write_log(log_path, image, result, session_id))
