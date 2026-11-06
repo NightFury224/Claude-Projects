@@ -64,6 +64,11 @@ Settings in `config.h`:
 3. In the Study Watch tray menu, tick **Quiz lights** and check **Quiz lights connection → Bluetooth**.
 4. The tray icon shows the link: 🔵 box connected, 🟣 box not connected (Study Watch keeps searching), 🟠 AI working, 🔴 failed. Hover over it for the details.
 
+**Number answers in binary mode (Bluetooth C3):** questions without options (e.g. "find x") are shown as the number itself, up to 2 decimals. Counting mode stays for option questions and shows nothing for a number answer.
+- Only the bits the number needs: 5 = `101`, 12 = `1100`, 0 = one short flash.
+- An **extra-long flash (2.5 s)** is the decimal point. After it come the **hundredths** in binary: 12.5 → `1100` ▬▬ `110010` (50), 0.05 → `0` ▬▬ `101` (5).
+- Darkness after the last flash means the number has finished. Negative numbers are shown without their sign.
+
 Range is about 10 m. The laptop still needs internet for the AI.
 
 ## One plain bulb (the default build)

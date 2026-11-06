@@ -1,6 +1,7 @@
 // Quiz Lights, Bluetooth version, for the ESP32-C3 Super Mini. Study Watch on the laptop connects
 // straight to this board (no Wi-Fi, no topic, no setup). One bulb (the board's blue LED) shows answers.
-// Binary: long flash = 1, short flash = 0. Counting: one blink per unit. A=1, B=2 ... no answer = 0.
+// Counting (options): one blink per unit, A=1, B=2 ... Binary: long flash = 1, short flash = 0; number answers
+// are shown as the number itself (an extra-long flash is the decimal point), options as A=1, B=2 ...
 // Arduino IDE: board "ESP32C3 Dev Module", USB CDC On Boot: Enabled. No extra libraries needed.
 
 #include <BLEDevice.h>
@@ -15,6 +16,7 @@
 #define SHORT_MS 300            // binary 0
 #define GAP_MS 500              // dark gap between flashes
 #define BLINK_MS 400            // counting blink
+#define POINT_MS 2500           // binary numbers: an extra-long flash is the decimal point
 #define BETWEEN_ANSWERS_MS 3000 // pause between answers when one screen has several questions
 
 // Must match Study Watch.
@@ -38,6 +40,30 @@ void sendCount(int v) {
 
 void sendBinary(int v) {  // most significant bit first; a 0 is a short flash, never darkness
   for (int b = BITS - 1; b >= 0; b--) { flash((v >> b) & 1 ? LONG_MS : SHORT_MS); delay(GAP_MS); }
+}
+
+// Binary for a number answer: only the bits it needs (5 = 101), most significant first. 0 = one short flash.
+void sendBits(unsigned long v) {
+  int n = 1;
+  while (n < 32 && (v >> n)) n++;
+  for (int b = n - 1; b >= 0; b--) { flash((v >> b) & 1 ? LONG_MS : SHORT_MS); delay(GAP_MS); }
+}
+
+// "12.5" → 1100, extra-long flash (the point), then the hundredths 50 = 110010. "12" → 1100 only.
+void sendNumber(String n) {
+  Serial.println("Showing number " + n + " (binary)");
+  if (n.startsWith("-")) n = n.substring(1);  // negatives are shown without their sign
+  int dot = n.indexOf('.');
+  unsigned long whole = strtoul((dot < 0 ? n : n.substring(0, dot)).c_str(), nullptr, 10);
+  String frac = dot < 0 ? "" : n.substring(dot + 1);
+  while (frac.length() < 2 && frac.length() > 0) frac += "0";  // .5 → 50 hundredths
+  unsigned long hundredths = frac.length() ? strtoul(frac.substring(0, 2).c_str(), nullptr, 10) : 0;
+  sendBits(whole);
+  if (hundredths) {
+    flash(POINT_MS);
+    delay(GAP_MS);
+    sendBits(hundredths);
+  }
 }
 
 void show(int v) {
@@ -89,6 +115,13 @@ void handle(String m) {
     tok.trim();
     start = c + 1;
     int v;
+    if (tok.startsWith(":")) {  // a number answer (question without options)
+      if (!first) delay(BETWEEN_ANSWERS_MS);
+      first = false;
+      if (mode == 2) sendNumber(tok.substring(1));  // binary shows the number
+      else show(0);                                 // counting is for options only: nothing
+      continue;
+    }
     if (tok == "-" || tok == "NONE") v = 0;
     else if (tok.length() == 1 && tok[0] >= 'A' && tok[0] <= 'Z') v = tok[0] - 'A' + 1;
     else continue;

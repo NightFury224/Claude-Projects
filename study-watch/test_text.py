@@ -7,7 +7,7 @@ assert s.to_watch_text("a_1 and **bold**") == "a₁ and bold"
 
 parsed = s.parse_answer('```json\n{"question": "Solve x^2=4", "answer": "x = ±2", "steps": ["a", "b"]}\n```')
 assert parsed == {"question": "Solve x²=4", "answer": "x = ±2", "steps": ["a", "b"], "context": "",
-                  "new_set": False, "options": [], "ok": True}
+                  "new_set": False, "options": [], "numbers": [], "ok": True}
 # Plain text (like a thinking model's raw thoughts) is marked unusable, so it's retried, never shown.
 assert s.parse_answer("We need to solve the MCQs. Let's parse: ...")["ok"] is False
 assert all(len(p) <= s.NTFY_LIMIT for p in s.split_text("word " * 2000, s.NTFY_LIMIT))
@@ -104,3 +104,12 @@ assert s.lights_letters({"answer": "54,080", "options": ["A", "B", "C", "D"]}) =
 assert s.lights_letters({"answer": "54,080", "options": ["C"]}) == ["C"]
 assert s.lights_letters({"answer": "Q3: 0.005 · Q4: 1/3", "options": ["C", "B"]}) == ["C", "B"]
 print("lights letters ok")
+
+# Numbers for the binary mode.
+assert s.number_list("12") == ["12"] and s.number_list("-,4.25") == ["-", "4.25"]
+assert s.number_list("0.333") == ["0.33"] and s.number_list("12.50") == ["12.5"] and s.number_list("x") == []
+assert s.lights_message({"answer": "12", "numbers": ["12"]}) == ":12"
+assert s.lights_message({"answer": "C) 54,080", "options": ["C"], "numbers": []}) == "C"
+assert s.lights_message({"answer": "Q1: B) 27 · Q2: 4.25", "options": ["B", "-"], "numbers": ["-", "4.25"]}) == "B,:4.25"
+assert s.lights_message({"answer": "Paris", "numbers": []}) is None
+print("numbers ok")

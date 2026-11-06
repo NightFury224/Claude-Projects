@@ -107,12 +107,15 @@ SPLIT_QUESTIONS = """A question cut across two screens:
 REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
- "new_set": false, "options": "<letters>"}
+ "new_set": false, "options": "<letters>", "numbers": "<numbers>"}
 "options": the letter of the ONE CORRECT option for each question answered, in the same order as "answer",
 comma-separated, with "-" for a question that has no lettered options: one letter per question, never a list
 of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when options are labelled
 A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Empty if no
-question has options."""
+question has options.
+"numbers": for each question in the same order, its answer as a plain number with at most 2 decimals
+(12, 0.33, 54080, -4.5; round, no units or commas) when the question has NO lettered options and the answer
+is one number; "-" otherwise. Comma-separated, e.g. "12" or "-,4.25". Empty if no question qualifies."""
 
 
 def load_rules():
@@ -238,6 +241,7 @@ def parse_answer(raw):
             "context": str(data.get("context") or "").strip(),
             "new_set": data.get("new_set") is True,
             "options": option_list(data.get("options")),
+            "numbers": number_list(data.get("numbers")),
             "ok": True,
         }
     # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
@@ -254,12 +258,13 @@ def parse_answer(raw):
             "context": fields["context"].group(1).strip() if fields["context"] else "",
             "new_set": bool(re.search(r'"new_set"\s*:\s*true', raw)),
             "options": option_list((re.search(r'"options"\s*:\s*"([^"]*)"', raw) or [None, ""])[1]),
+            "numbers": number_list((re.search(r'"numbers"\s*:\s*"([^"]*)"', raw) or [None, ""])[1]),
             "ok": True,
         }
     log_error("Couldn't read the model's reply:\n" + raw)
     text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
     return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": "",
-            "new_set": False, "options": [], "ok": False}
+            "new_set": False, "options": [], "numbers": [], "ok": False}
 
 
 def is_placeholder(text):
@@ -280,6 +285,39 @@ def option_list(value):
             continue
         letters.append(item if re.fullmatch(r"[A-Z]", item) else "-")
     return letters if any(l != "-" for l in letters) else []
+
+
+def number_list(value):
+    """The model's "numbers" field ("12", "-,4.25", [12, 0.5]) → ["12", "-", "4.25"]: plain numbers rounded to
+    at most 2 decimals, "-" for anything else. [] if there's no number at all."""
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    numbers = []
+    for item in (str(i).strip().replace(" ", "") for i in items):
+        if not item:
+            continue
+        try:
+            number = round(float(item), 2) if re.fullmatch(r"-?\d+(\.\d+)?", item) else None
+        except ValueError:
+            number = None
+        if number is None or abs(number) >= 1_000_000:
+            numbers.append("-")
+        else:
+            numbers.append(f"{number:.2f}".rstrip("0").rstrip(".") if number != int(number) else str(int(number)))
+    return numbers if any(n != "-" for n in numbers) else []
+
+
+def lights_message(result):
+    """What the quiz lights get, one token per question: "C" for an option, ":12.5" for a number (shown by the
+    binary mode; counting shows nothing for it), "-" for neither. None when there's nothing to show."""
+    letters = lights_letters(result)
+    numbers = result.get("numbers") or []
+    if len(numbers) != len(letters):
+        numbers = numbers if len(letters) == 1 and len(numbers) == 1 else []
+    tokens = []
+    for i, letter in enumerate(letters):
+        number = numbers[i] if i < len(numbers) else "-"
+        tokens.append(letter if letter != "-" else f":{number}" if number != "-" else "-")
+    return ",".join(tokens) if any(t != "-" for t in tokens) else None
 
 
 def answer_parts(answer):
@@ -833,11 +871,12 @@ class StudyWatch:
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
-            letters = lights_letters(result)
-            if any(l != "-" for l in letters):
-                self.watch.lights(",".join(letters))
-            elif "unfinished question" in result["context"].lower():
-                pass  # its options are on the next screen: the lights wait for that answer instead of showing 0
+            message = lights_message(result)
+            if "unfinished question" in result["context"].lower() and not any(
+                    l != "-" for l in lights_letters(result)):
+                pass  # its options are on the next screen: the lights wait for that answer instead
+            elif message:
+                self.watch.lights(message)
             else:
                 self.watch.lights("none")
             self.send_overview()
