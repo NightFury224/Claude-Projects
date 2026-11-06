@@ -47,7 +47,8 @@ DEFAULTS = {
     "lights": False,
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
     "caps_lights": False,
-    "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
+    "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
+    "label_style": "tooltip",    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
     "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
@@ -764,21 +765,57 @@ def glide_pointer(target, seconds=0.5):
 POINT_HOLD_S = 5.0  # how long the pointer stays on each answer before moving to the next question's
 
 
-def show_label(target, text, seconds=8):
-    """A big floating label next to [target] (screen pixels) for a few seconds, e.g. "= 12" by an answer box.
-    It only shows the number; nothing is typed into the page."""
+def show_label(target, text, seconds=8, style="tooltip"):
+    """A floating label next to [target] (screen pixels) for a few seconds, e.g. "12" by an answer box. It only
+    shows the number; nothing is typed into the page. It fades in and out, and is a layered window: Windows
+    blends it with the page behind it.
+    - "tooltip": a dark box with a thin grey border, like a Windows tooltip.
+    - "light": just the number in light, see-through grey; no box, and clicks pass through it."""
+    import ctypes
     import tkinter as tk
 
     root = tk.Tk()
     root.overrideredirect(True)
-    root.attributes("-topmost", True)
-    tk.Label(root, text=text, font=("Segoe UI", 28, "bold"), fg="white", bg="#1f7a3a", padx=14, pady=4).pack()
-    root.geometry(f"+{target[0] + 24}+{target[1] - 30}")
-    root.after(int(seconds * 1000), root.destroy)
+    root.attributes("-topmost", True, "-alpha", 0.0)
+    if style == "light":
+        key = "#9aa0a9"  # nearly the text colour, so the letters' soft edges blend in cleanly
+        root.configure(bg=key)
+        root.attributes("-transparentcolor", key)  # everything but the letters is see-through
+        tk.Label(root, text=text, font=("Segoe UI", 40, "bold"), fg="#9ba1aa", bg=key).pack()
+        peak = 0.75
+    else:
+        frame = tk.Frame(root, bg="#767676", padx=1, pady=1)  # the thin grey border
+        frame.pack()
+        tk.Label(frame, text=text, font=("Segoe UI", 22), fg="white", bg="#2b2b2b", padx=14, pady=4).pack()
+        peak = 0.96
+    root.geometry(f"+{target[0] + 28}+{target[1] - 28}")
+    root.update_idletasks()
+    try:  # never steal focus from the page; for "light", let clicks pass straight through
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        GWL_EXSTYLE, LAYERED, TRANSPARENT, NOACTIVATE, TOOLWINDOW = -20, 0x80000, 0x20, 0x8000000, 0x80
+        extra = LAYERED | NOACTIVATE | TOOLWINDOW | (TRANSPARENT if style == "light" else 0)
+        style_bits = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style_bits | extra)
+    except Exception:  # noqa: BLE001
+        pass
+
+    steps, fade_ms = 12, 250
+
+    def fade(i, direction):
+        root.attributes("-alpha", peak * i / steps)
+        if direction > 0 and i < steps:
+            root.after(fade_ms // steps, fade, i + 1, 1)
+        elif direction < 0 and i > 0:
+            root.after(fade_ms // steps, fade, i - 1, -1)
+        elif direction < 0:
+            root.destroy()
+
+    fade(0, 1)
+    root.after(int(seconds * 1000), fade, steps, -1)
     root.mainloop()
 
 
-def point_at_answer(image, result):
+def point_at_answer(image, result, label_style="tooltip"):
     """Visits each question's answer in turn, staying a few seconds on each (it ends on the last one):
     - a question with options: the pointer goes onto the correct option (never clicks);
     - a number answer: the pointer goes to the answer box and a label beside it shows the number (nothing typed).
@@ -819,7 +856,7 @@ def point_at_answer(image, result):
         glide_pointer(target)
         moved = True
         if letter == "-":  # a number answer: show it beside the box
-            threading.Thread(target=show_label, args=(target, f"= {number}", POINT_HOLD_S + 3),
+            threading.Thread(target=show_label, args=(target, number, POINT_HOLD_S + 3, label_style),
                              daemon=True).start()
 
 
@@ -1144,7 +1181,8 @@ class StudyWatch:
             if self.config.get("caps_lights"):
                 threading.Thread(target=caps_count, args=(lights_letters(result),), daemon=True).start()
             if self.config.get("point_answer") and not region:
-                threading.Thread(target=point_at_answer, args=(image, result), daemon=True).start()
+                threading.Thread(target=point_at_answer, args=(image, result, self.config.get("label_style", "tooltip")),
+                                 daemon=True).start()
             self.send_overview()
             self.set_status("idle")
             self.log_jobs.put(lambda: self.write_log(log_path, image, result, session_id))
@@ -1468,6 +1506,22 @@ def main():
         app.config["point_answer"] = not app.config.get("point_answer")
         save_config(app.config)
 
+    def preview_label():
+        """Shows the label by the mouse pointer, so the class can compare the styles without a question."""
+        import ctypes
+
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        where = POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(where))
+        threading.Thread(target=show_label, args=((where.x, where.y), "12", 5, app.config.get("label_style", "tooltip")),
+                         daemon=True).start()
+
+    def set_label_style(style):
+        app.config["label_style"] = style
+        save_config(app.config)
+
     def toggle_caps(icon, item):
         app.config["caps_lights"] = not app.config.get("caps_lights")
         save_config(app.config)
@@ -1503,6 +1557,14 @@ def main():
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
         pystray.MenuItem("Point the mouse at the answer", toggle_point,
                          checked=lambda item: app.config.get("point_answer")),
+        pystray.MenuItem("Number label style", pystray.Menu(
+            pystray.MenuItem("Tooltip (Windows pop-up)", lambda icon, item: set_label_style("tooltip"),
+                             checked=lambda item: app.config.get("label_style", "tooltip") == "tooltip", radio=True),
+            pystray.MenuItem("Light see-through number", lambda icon, item: set_label_style("light"),
+                             checked=lambda item: app.config.get("label_style") == "light", radio=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Preview it", lambda icon, item: preview_label()),
+        ), enabled=lambda item: app.config.get("point_answer")),
         pystray.MenuItem("Caps Lock light (counting)", toggle_caps,
                          checked=lambda item: app.config.get("caps_lights")),
         pystray.MenuItem("Test quiz lights", test_lights,
