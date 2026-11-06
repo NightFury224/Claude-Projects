@@ -2000,5 +2000,245 @@ def main():
     icon.run()
 
 
+# ======================================================================================================
+# Coding mode: type the code out live. Each tap of End types the next letter of the code into the
+# editor you're in (IDLE, VS Code, Jupyter, Notepad …), so the class watches the program being written.
+# Paste this whole block just above the last two lines of study_watch.py:
+#     if __name__ == "__main__":
+#         main()
+# Settings in config.json (then tray → Reload settings):
+#     "type_key": "end"     or "f9", "pause", "scroll lock"
+#     "type_code": true     false turns the typing off
+# ======================================================================================================
+
+DEFAULTS.setdefault("type_code", True)
+DEFAULTS.setdefault("type_key", "end")
+SENT_KEY_NAMES = {"enter", "backspace", "home", "shift", "left shift"}  # keys the typing presses itself
+
+
+def next_keys(lines, index, typed):
+    """What one tap of the type key sends to your editor.
+    [typed] is how many characters of lines[index] are typed so far, or None if that line isn't started.
+    Returns (keys, index, typed), where keys are ("text", "…") and ("key", "enter") steps.
+
+    Each tap types one character. Starting a new line takes a tap of its own: Enter plus the line's
+    indentation. That indentation replaces whatever the editor indented by itself after Enter, so the
+    code comes out exactly right in IDLE, VS Code, Jupyter or Notepad alike."""
+    if index >= len(lines):
+        return [], index, typed
+    if typed is not None and typed >= len(lines[index]):
+        index, typed = index + 1, None  # this line is finished: the tap starts the next one
+        if index >= len(lines):
+            return [], index, None  # the whole program is typed
+    line = lines[index]
+    if typed is None:
+        indent = len(line) - len(line.lstrip(" "))
+        keys = []
+        if index > 0:  # the first line goes where the cursor is; every later one starts with Enter
+            keys = [("text", " "), ("key", "backspace"),  # closes a suggestion list, so it can't take the Enter
+                    ("key", "enter"),
+                    ("key", "shift+home")]  # selects the indentation the editor added by itself …
+            # … and typing over the selection replaces it with exactly this line's indentation
+            keys += [("text", " " * indent)] if indent else [("text", " "), ("key", "backspace")]
+        elif indent:
+            keys = [("text", " " * indent)]
+        typed = indent
+        if keys:
+            return keys, index, typed
+    return [("text", line[typed])], index, typed + 1
+
+
+def send_keys(steps):
+    """Types into whichever window has the cursor. ("text", "abc") types those exact characters (with
+    any keyboard layout); ("key", "enter") or ("key", "shift+home") presses keys."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    class MOUSEINPUT(ctypes.Structure):  # only here so INPUT gets its full size
+        _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                    ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    class EVENT(ctypes.Union):
+        _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT)]
+
+    class INPUT(ctypes.Structure):
+        _fields_ = [("type", wintypes.DWORD), ("event", EVENT)]
+
+    KEYUP, UNICODE, EXTENDED = 0x2, 0x4, 0x1
+    VK = {"enter": 0x0D, "backspace": 0x08, "home": 0x24, "shift": 0x10}
+
+    def event(vk=0, scan=0, flags=0):
+        return INPUT(type=1, event=EVENT(ki=KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=flags)))
+
+    for kind, value in steps:
+        events = []
+        if kind == "text":
+            units = value.encode("utf-16-le")
+            for i in range(0, len(units), 2):
+                unit = int.from_bytes(units[i:i + 2], "little")
+                events += [event(scan=unit, flags=UNICODE), event(scan=unit, flags=UNICODE | KEYUP)]
+        else:
+            codes = [VK[name] for name in value.split("+")]
+            down = [event(vk, user32.MapVirtualKeyW(vk, 0), EXTENDED if vk == VK["home"] else 0) for vk in codes]
+            up = [event(vk, user32.MapVirtualKeyW(vk, 0), (EXTENDED if vk == VK["home"] else 0) | KEYUP)
+                  for vk in reversed(codes)]
+            events = down + up
+        if events:
+            user32.SendInput(len(events), (INPUT * len(events))(*events), ctypes.sizeof(INPUT))
+            time.sleep(0.02)  # lets the editor finish one step (e.g. its auto-indent) before the next
+
+
+def add_typing(cls):
+    """Teaches the CodeLine overlay to type. A keyboard hook catches the type key; a thread of its own keeps
+    track of where the typing is, sends the keys, and moves the faint line on with the typing."""
+    original = {name: getattr(cls, name) for name in ("__init__", "show", "next", "previous", "close")}
+
+    def __init__(self, config, *args, **kwargs):
+        original["__init__"](self, config, *args, **kwargs)
+        self.typing = queue.Queue()
+        self.typing_left = False  # True while there is code left to type
+        finished = self.on_done
+
+        def on_done():  # after "✓ done" the overlay forgets the program, and so does the typing
+            self.typing.put(("close", None))
+            finished()
+
+        self.on_done = on_done
+        threading.Thread(target=self._typist, daemon=True).start()
+        if sys.platform == "win32":
+            try:
+                import keyboard
+                keyboard.hook(self._type_key, suppress=True)
+            except Exception:  # noqa: BLE001
+                log_error(traceback.format_exc())
+
+    def forward(name):  # Page Down, Page Up, a new program, Close: the typing follows the overlay
+        def method(self, *args):
+            self.typing.put((name, list(args[0]) if args else None))
+            return original[name](self, *args)
+        return method
+
+    def type_next(self):
+        self.typing.put(("type", None))
+
+    def _type_key(self, event):
+        """Keyboard hook. Returns False to swallow the key, True to let it through to the app you're in."""
+        try:
+            key = str(self.config.get("type_key", "end")).strip().lower()
+            taken = {str(self.config.get("hotkey_screen", "")).strip().lower(), "page down", "page up", "insert",
+                     "caps lock"} | SENT_KEY_NAMES
+            if (event.name != key or key in taken or self.config.get("mode") != "coding"
+                    or not self.config.get("type_code", True) or not self.typing_left):
+                return True  # every other key, and End when there's no code to type, works as normal
+            import keyboard
+            if any(keyboard.is_pressed(name) for name in ("ctrl", "shift", "alt")):
+                return True  # Ctrl+End, Shift+End … still work
+            if event.event_type == "down":
+                self.type_next()  # held down, it keeps typing
+            return False  # swallowed: the editor never sees it
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _typist(self):
+        lines, index, typed = [], 0, None
+        while True:
+            command, value = self.typing.get()
+            try:
+                if command == "show":
+                    lines, index, typed = value, 0, None
+                elif command == "close":
+                    lines, index, typed = [], 0, None
+                elif command == "next" and index < len(lines):
+                    index, typed = index + 1, None  # the next tap starts that line afresh
+                elif command == "previous" and lines and index > 0:
+                    index, typed = index - 1, None
+                elif command == "type" and index < len(lines):
+                    keys, new_index, typed = next_keys(lines, index, typed)
+                    if new_index != index:
+                        index = new_index
+                        self.commands.put(("next", None))  # the faint line moves on with the typing
+                    send_keys(keys)
+            except Exception:  # noqa: BLE001
+                log_error(traceback.format_exc())
+            self.typing_left = index < len(lines)
+
+    cls.__init__ = __init__
+    for name in ("show", "next", "previous", "close"):
+        setattr(cls, name, forward(name))
+    cls.type_next, cls._type_key, cls._typist = type_next, _type_key, _typist
+
+
+if not hasattr(CodeLine, "type_next"):  # pasting it twice does no harm
+    add_typing(CodeLine)
+
+
+# ======================================================================================================
+# Tray option "Show the faint code line". Untick it and the faint line never appears on screen; typing with
+# End, Page Down / Page Up and everything else keep working. Tick it again and the line comes back.
+# Paste this block just below the typing block, still above the last two lines of study_watch.py:
+#     if __name__ == "__main__":
+#         main()
+# ======================================================================================================
+
+DEFAULTS.setdefault("show_code_line", True)
+
+
+def add_show_option(cls):
+    """The overlay counts as hidden while Insert has hidden it, or while the tray option is unticked."""
+    def get_hidden(self):
+        return self.__dict__.get("_hidden", False) or not getattr(self, "config", {}).get("show_code_line", True)
+
+    def set_hidden(self, value):
+        self.__dict__["_hidden"] = bool(value)
+
+    cls.hidden = property(get_hidden, set_hidden)
+    cls.show_option_added = True
+
+
+def toggle_code_line(icon, item):
+    if OVERLAY is not None:
+        OVERLAY.config["show_code_line"] = not OVERLAY.config.get("show_code_line", True)
+        save_config(OVERLAY.config)
+        OVERLAY.restyle()  # shows or hides it straight away
+
+
+def with_show_option(menu):
+    """The tray menu with "Show the faint code line" added just below "Code line"."""
+    import pystray
+    option = pystray.MenuItem("Show the faint code line", toggle_code_line,
+                              checked=lambda item: OVERLAY is None or OVERLAY.config.get("show_code_line", True))
+    items = list(menu.items)
+    names = []
+    for entry in items:
+        try:
+            names.append(str(entry.text))
+        except Exception:  # noqa: BLE001
+            names.append("")
+    at = names.index("Code line") + 1 if "Code line" in names else max(len(items) - 2, 0)  # else just above Quit
+    return pystray.Menu(*items[:at], option, *items[at:])
+
+
+if not getattr(CodeLine, "show_option_added", False):  # pasting it twice does no harm
+    add_show_option(CodeLine)
+    main_without_show_option = main
+
+    def main():
+        import pystray
+
+        class Icon(pystray.Icon):
+            def __init__(self, name, icon=None, title=None, menu=None, **kwargs):
+                super().__init__(name, icon, title, with_show_option(menu) if menu is not None else None, **kwargs)
+
+        pystray.Icon = Icon
+        main_without_show_option()
+
+
 if __name__ == "__main__":
     main()
