@@ -46,6 +46,7 @@ DEFAULTS = {
     "ready_message": True,
     "lights": False,
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
+    "caps_lights": False,        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
     "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
@@ -614,6 +615,52 @@ class Claude:
         ], max_tokens=8000, skip=skip)  # room for thinking models; only the short fields are shown  # room for the private working (and thinking models); only short fields are shown
 
 
+# ---------------------------------------------------------------- Caps Lock light (counting)
+
+CAPS_BLINK_S = 0.4          # on and off time of each blink
+CAPS_BETWEEN_S = 3.0        # pause between answers when one screen has several questions
+caps_lock = threading.Lock()
+
+
+def caps_count(letters):
+    """Counts each answer on the Caps Lock light: A = 1 blink, B = 2 … Number answers and "-" show nothing.
+    Caps Lock is put back the way it was afterwards."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    user32 = ctypes.windll.user32
+    VK_CAPITAL, KEYUP = 0x14, 0x0002
+
+    def is_on():
+        return bool(user32.GetKeyState(VK_CAPITAL) & 1)
+
+    def toggle():
+        user32.keybd_event(VK_CAPITAL, 0x3A, 0, 0)
+        user32.keybd_event(VK_CAPITAL, 0x3A, KEYUP, 0)
+        time.sleep(0.02)
+
+    counts = [ord(l) - ord("A") + 1 if len(l) == 1 and "A" <= l <= "Z" else 0 for l in letters]
+    if not any(counts):
+        return
+    with caps_lock:  # one answer at a time
+        was_on = is_on()
+        try:
+            if was_on:
+                toggle()
+                time.sleep(1.0)  # dark first, so the first blink is clear
+            for i, count in enumerate(counts):
+                if i:
+                    time.sleep(CAPS_BETWEEN_S)
+                for _ in range(count):
+                    toggle()
+                    time.sleep(CAPS_BLINK_S)
+                    toggle()
+                    time.sleep(CAPS_BLINK_S)
+        finally:
+            if is_on() != was_on:
+                toggle()
+
+
 # ---------------------------------------------------------------- quiz lights over Bluetooth
 
 LIGHTS_SERVICE = "7a3c0001-5f1e-4e8a-9b6d-2c4f1e0b7a10"
@@ -624,8 +671,9 @@ class BleLights:
     """Keeps a Bluetooth Low Energy link to the quiz-lights box (advertised as "QuizLights") and
     reconnects by itself. Messages are the same text as over Wi-Fi: "B", "B,-,D", "none", "mode binary"."""
 
-    def __init__(self, wanted, on_change, config=None):
+    def __init__(self, wanted, on_change, config=None, on_message=None):
         self.config = config if config is not None else {}
+        self.on_message = on_message or (lambda text: None)  # e.g. "SOLVE" when the box's button is pressed
         self.wanted = wanted          # () -> bool: only search while quiz lights over Bluetooth is on
         self.on_change = on_change    # called with True/False when the link comes up or drops
         self.connected = False
@@ -698,6 +746,12 @@ class BleLights:
                             save_config(self.config)
                         except Exception:  # noqa: BLE001
                             log_error(traceback.format_exc())
+                    try:  # the box's BOOT button works as a remote: it notifies "SOLVE"
+                        await client.start_notify(
+                            LIGHTS_CHAR, lambda _, data: self.on_message(bytes(data).decode(errors="ignore")))
+                    except Exception:  # noqa: BLE001 - older firmware without the button: lights still work
+                        log_error("Quiz lights: the box's button isn't available (older firmware?)\n"
+                                  + traceback.format_exc(limit=1))
                     self.reason = "connected"
                     self._set(True)
                     while client.is_connected and self.wanted():
@@ -879,6 +933,8 @@ class StudyWatch:
                 self.watch.lights(message)
             else:
                 self.watch.lights("none")
+            if self.config.get("caps_lights"):
+                threading.Thread(target=caps_count, args=(lights_letters(result),), daemon=True).start()
             self.send_overview()
             self.set_status("idle")
             self.log_jobs.put(lambda: self.write_log(log_path, image, result, session_id))
@@ -1198,11 +1254,18 @@ def main():
     def lights_mode(mode):
         threading.Thread(target=app.watch.lights, args=(f"mode {mode}",), daemon=True).start()
 
+    def toggle_caps(icon, item):
+        app.config["caps_lights"] = not app.config.get("caps_lights")
+        save_config(app.config)
+
     def test_lights(icon, item):
         def run():
             app.watch.lights("thinking")
             time.sleep(4)
-            app.watch.lights(secrets.choice("ABCD"))
+            letter = secrets.choice("ABCD")
+            app.watch.lights(letter)
+            if app.config.get("caps_lights"):
+                caps_count([letter])
         threading.Thread(target=run, daemon=True).start()
 
     def toggle_startup(icon, item):
@@ -1224,7 +1287,10 @@ def main():
         pystray.MenuItem("Edit AI rules", edit_rules),
         pystray.MenuItem("Reload settings", reload_settings),
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
-        pystray.MenuItem("Test quiz lights", test_lights, enabled=lambda item: app.config.get("lights")),
+        pystray.MenuItem("Caps Lock light (counting)", toggle_caps,
+                         checked=lambda item: app.config.get("caps_lights")),
+        pystray.MenuItem("Test quiz lights", test_lights,
+                         enabled=lambda item: app.config.get("lights") or app.config.get("caps_lights")),
         pystray.MenuItem("Quiz lights connection", pystray.Menu(
             pystray.MenuItem("Bluetooth (laptop → box)", lambda icon, item: set_link("bluetooth"),
                              checked=lambda item: app.config.get("lights_link", "bluetooth") == "bluetooth",
@@ -1261,7 +1327,8 @@ def main():
     app.status_callback = show_status
     app.watch.ble = BleLights(
         lambda: bool(app.config.get("lights")) and app.config.get("lights_link", "bluetooth") == "bluetooth",
-        lambda connected: show_status(status["state"]), app.config)
+        lambda connected: show_status(status["state"]), app.config,
+        lambda text: app.run(region=False) if text.strip().upper() == "SOLVE" else None)
     hotkey_ok = register_hotkeys()
     threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
     threading.Thread(target=app.watch.listen, args=(app.handle_command, app.stop), daemon=True).start()

@@ -113,3 +113,7 @@ assert s.lights_message({"answer": "C) 54,080", "options": ["C"], "numbers": []}
 assert s.lights_message({"answer": "Q1: B) 27 · Q2: 4.25", "options": ["B", "-"], "numbers": ["-", "4.25"]}) == "B,:4.25"
 assert s.lights_message({"answer": "Paris", "numbers": []}) is None
 print("numbers ok")
+
+# Caps Lock counting is Windows-only; elsewhere it does nothing (and never raises).
+s.caps_count(["C", "-"])
+print("caps ok")
