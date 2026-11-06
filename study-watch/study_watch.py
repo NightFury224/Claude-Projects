@@ -50,7 +50,7 @@ DEFAULTS = {
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
     "label_size": 13,            # quiz number label text size, same scale as the code line
     "label_opacity": 0.2,        # quiz number label see-through level, same scale as the code line
-    "caps_thinking": True,       # flash Caps Lock every 2 seconds while the AI is thinking
+    "caps_thinking": True,       # flash Caps Lock every 5 seconds while the AI is thinking
     "mode": "quiz",              # "quiz" (options and numbers) or "coding" (Python, one line at a time)
     "code_size": 13,             # coding mode: text size of the code line (10 small … 22 extra large)
     "code_opacity": 0.2,         # coding mode: how solid the code line is (0.12 very faint … 0.45 clear)
@@ -1094,7 +1094,7 @@ caps_lock = threading.Lock()
 
 
 def caps_thinking(stop):
-    """While the AI is thinking: one short Caps Lock flash every 2 seconds until [stop] is set.
+    """While the AI is thinking: one short Caps Lock flash every 5 seconds until [stop] is set.
     Caps Lock is always put back the way it was."""
     if sys.platform != "win32":
         return
@@ -1106,7 +1106,7 @@ def caps_thinking(stop):
         user32.keybd_event(0x14, 0x3A, 0x0002, 0)
         time.sleep(0.02)
 
-    while not stop.wait(2.0):
+    while not stop.wait(5.0):
         with caps_lock:
             toggle()
             time.sleep(0.3)
