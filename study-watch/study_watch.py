@@ -260,9 +260,15 @@ def option_letters(answer):
     """The option letter of each answer, in order: "Q1: B) 27 · Q2: 39°C · Q3: D) x" → ["B", "-", "D"].
     "-" marks a question without an option letter. Lone letters ("B") count too."""
     letters = []
-    for part in answer.split(" · "):
-        part = re.sub(r"^\s*Q\d+\s*:\s*", "", part.strip())
-        found = re.match(r"\(?([A-Za-z])\)", part) or re.fullmatch(r"([A-Za-z])\.?", part)
+    parts = [p for p in re.split(r"\s·\s|\n|;\s+|\s\|\s", answer) if p.strip()]
+    for part in parts:
+        part = re.sub(r"^\s*(?:Q\.?\s*\d+|\d+[.)])\s*[:.)-]?\s*", "", part.strip())
+        part = re.sub(r"^(?:option|ans(?:wer)?)\s*[:.-]?\s*", "", part, flags=re.I)
+        found = (re.match(r"\(?([A-Za-z])\)", part)                      # "B) 27", "(B) 27"
+                 or re.fullmatch(r"([A-Za-z])\.?", part)                 # "B"
+                 or re.match(r"([A-H])(?:[.:]\s|\s+[-–—=]\s*|\s+(?=[\d(√π⅓¼½⅔¾-]))", part)  # "B. 27", "B - 27", "B 27"
+                 or re.search(r"\(([A-H])\)\s*$", part)                 # "27 (B)"
+                 or re.search(r"\boption\s+([A-H])\b", part, re.I))    # "… option B"
         letters.append(found.group(1).upper() if found else "-")
     return letters
 
@@ -555,10 +561,11 @@ class BleLights:
             self.on_change(connected)
 
     def send(self, message):
-        """Returns False if the box isn't connected (the message is dropped, not queued for later)."""
-        if not (self.connected and self.loop):
+        """Queues a message. If the link is down for a moment (Windows drops idle Bluetooth links), it's
+        sent as soon as it reconnects, unless that takes more than 30 seconds. False if Bluetooth isn't running."""
+        if not self.loop:
             return False
-        self.loop.call_soon_threadsafe(self.queue.put_nowait, message)
+        self.loop.call_soon_threadsafe(self.queue.put_nowait, (time.time(), message))
         return True
 
     def _thread(self):
@@ -612,16 +619,20 @@ class BleLights:
                             save_config(self.config)
                         except Exception:  # noqa: BLE001
                             log_error(traceback.format_exc())
-                    while not self.queue.empty():
-                        self.queue.get_nowait()  # nothing stale from before the link came up
                     self.reason = "connected"
                     self._set(True)
                     while client.is_connected and self.wanted():
                         try:
-                            message = await asyncio.wait_for(self.queue.get(), 2)
+                            sent_at, message = await asyncio.wait_for(self.queue.get(), 2)
                         except asyncio.TimeoutError:
                             continue
-                        await client.write_gatt_char(LIGHTS_CHAR, message.encode(), response=True)
+                        if time.time() - sent_at > 30:
+                            continue  # stale: the class has moved on
+                        try:
+                            await client.write_gatt_char(LIGHTS_CHAR, message.encode(), response=True)
+                        except Exception:
+                            self.queue.put_nowait((sent_at, message))  # retry after reconnecting
+                            raise
             except Exception as error:  # noqa: BLE001 - out of range, switched off, Bluetooth off: just retry
                 text = str(error)
                 if "not ready" in text.lower() or getattr(error, "winerror", None) == -2147020577:
@@ -671,7 +682,7 @@ class Watch:
             return
         if self.config.get("lights_link", "bluetooth") == "bluetooth":
             if not (self.ble and self.ble.send(signal)):
-                print(f"Quiz lights not connected over Bluetooth; skipped {signal!r}")
+                log_error(f"Quiz lights: Bluetooth isn't running; skipped {signal!r}")
             return
         try:
             requests.post(f"{self.server}/{self.lights_topic}", data=signal.encode(), headers=self.headers(),
