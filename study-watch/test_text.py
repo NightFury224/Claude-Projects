@@ -149,3 +149,7 @@ _boxes = [("☐ 50", 100, 300, 60, 20, _R(x=100, y=300, width=12, height=20)),
 assert s.find_option(_boxes, "B", (120, 365), 200, value="70") == (130, 370)
 assert s.find_option(_boxes, "B", (120, 365), 200, value="") is None
 print("unlabelled ok")
+
+# A question whose options are cut off, with a number answer, still shows the number.
+assert s.lights_message({"answer": "54080", "options": [], "numbers": [], "context": "Unfinished question: …"}) == ":54080"
+print("unfinished number ok")

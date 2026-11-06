@@ -122,8 +122,8 @@ current screen) as fractions of the image width and height: for a question with 
 correct option (its letter label, or its text if the options have no labels); for a question answered by
 typing into a box, the centre of that box; "-" otherwise. E.g. "0.18,0.42; -; 0.30,0.77".
 "numbers": for each question in the same order, its answer as a plain number with at most 2 decimals
-(12, 0.33, 54080, -4.5; round, no units or commas) when the question has NO lettered options and the answer
-is one number; "-" otherwise. Comma-separated, e.g. "12" or "-,4.25". Empty if no question qualifies."""
+(12, 0.33, 54080, -4.5; round, no units or commas) when no lettered options are visible for it on this screen
+(none at all, or cut off below) and the answer is one number; "-" otherwise. Comma-separated, e.g. "12" or "-,4.25". Empty if no question qualifies."""
 
 
 def load_rules():
@@ -830,17 +830,29 @@ def show_label(target, text, seconds=8, style="tooltip"):
     root.mainloop()
 
 
+def show_label_at_pointer(text, seconds, style):
+    import ctypes
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    where = POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(where))
+    threading.Thread(target=show_label, args=((where.x, where.y), text, seconds, style), daemon=True).start()
+
+
 def point_at_answer(image, result, label_style="tooltip"):
     """Visits each question's answer in turn, staying a few seconds on each (it ends on the last one):
     - a question with options: the pointer goes onto the correct option (never clicks);
     - a number answer: the pointer goes to the answer box and a label beside it shows the number (nothing typed).
     The AI gives rough spots; Windows text recognition snaps options onto their label or text when it can."""
-    points = result.get("point")
-    if sys.platform != "win32" or not points or LAST_LAYOUT is None:
+    if sys.platform != "win32" or LAST_LAYOUT is None:
         return
     letters = lights_letters(result)
     numbers = result.get("numbers") or answer_numbers(result["answer"])
     parts = answer_parts(result["answer"])
+    points = result.get("point") or []
+    points = points + [None] * (len(letters) - len(points))
     if len(points) == 1 and len(letters) > 1:  # a single spot: it belongs to the first question with an answer
         first = next((i for i, l in enumerate(letters) if l != "-" or i < len(numbers) and numbers[i] != "-"), 0)
         points = [None] * first + points
@@ -851,11 +863,18 @@ def point_at_answer(image, result, label_style="tooltip"):
         log_error("Pointer: text recognition failed, using the AI's position\n" + traceback.format_exc(limit=2))
     moved = False
     for i, point in enumerate(points):
-        if point is None or i >= len(letters):
+        if i >= len(letters):
             continue
         letter = letters[i]
         number = numbers[i] if i < len(numbers) else "-"
         if letter == "-" and number == "-":
+            continue
+        if point is None:
+            if letter == "-":  # a number with no box to point at: show it on the pointer where it is now
+                if moved:
+                    time.sleep(POINT_HOLD_S)
+                show_label_at_pointer(number, POINT_HOLD_S + 3, label_style)
+                moved = True
             continue
         x, y = point[0] * image.width, point[1] * image.height
         if letter != "-":
@@ -1186,11 +1205,10 @@ class StudyWatch:
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
             message = lights_message(result)
-            if "unfinished question" in result["context"].lower() and not any(
-                    l != "-" for l in lights_letters(result)):
-                pass  # its options are on the next screen: the lights wait for that answer instead
-            elif message:
+            if message:  # a letter, or a number (even for a question whose options are on the next screen)
                 self.watch.lights(message)
+            elif "unfinished question" in result["context"].lower():
+                pass  # nothing to show yet: its options are on the next screen
             else:
                 self.watch.lights("none")
             if self.config.get("caps_lights"):
