@@ -2103,19 +2103,21 @@ def main():
 
 
 # ======================================================================================================
-# Coding mode: type the code out live. Each tap of End types the next letter of the code into the
+# Coding mode: type the code out live. Each tap of Right Alt types the next letter of the code into the
 # editor you're in (IDLE, VS Code, Jupyter, Notepad …), so the class watches the program being written.
 # Paste this whole block just above the last two lines of study_watch.py:
 #     if __name__ == "__main__":
 #         main()
 # Settings in config.json (then tray → Reload settings):
-#     "type_key": "end"     or "f9", "pause", "scroll lock"
-#     "type_code": true     false turns the typing off
+#     "type_key": "right alt"   or "end", "f9", "pause", "scroll lock"
+#     "type_code": true         false turns the typing off
 # ======================================================================================================
 
 DEFAULTS.setdefault("type_code", True)
-DEFAULTS.setdefault("type_key", "end")
+DEFAULTS.setdefault("type_key", "right alt")
 SENT_KEY_NAMES = {"enter", "backspace", "home", "shift", "left shift"}  # keys the typing presses itself
+TYPE_KEY_CODES = {"right alt": 0xA5, "end": 0x23, "pause": 0x13, "scroll lock": 0x91,
+                  **{f"f{n}": 0x6F + n for n in range(1, 13)}}  # the keys "type_key" can be (Windows key codes)
 
 
 def next_keys(lines, index, typed):
@@ -2215,11 +2217,7 @@ def add_typing(cls):
         self.on_done = on_done
         threading.Thread(target=self._typist, daemon=True).start()
         if sys.platform == "win32":
-            try:
-                import keyboard
-                keyboard.hook(self._type_key, suppress=True)
-            except Exception:  # noqa: BLE001
-                log_error(traceback.format_exc())
+            threading.Thread(target=self._key_watch, daemon=True).start()
 
     def forward(name):  # Page Down, Page Up, a new program, Close: the typing follows the overlay
         def method(self, *args):
@@ -2230,23 +2228,79 @@ def add_typing(cls):
     def type_next(self):
         self.typing.put(("type", None))
 
-    def _type_key(self, event):
-        """Keyboard hook. Returns False to swallow the key, True to let it through to the app you're in."""
-        try:
-            key = str(self.config.get("type_key", "end")).strip().lower()
-            taken = {str(self.config.get("hotkey_screen", "")).strip().lower(), "page down", "page up", "insert",
-                     "caps lock"} | SENT_KEY_NAMES
-            if (event.name != key or key in taken or self.config.get("mode") != "coding"
-                    or not self.config.get("type_code", True) or not self.typing_left):
-                return True  # every other key, and End when there's no code to type, works as normal
-            import keyboard
-            if any(keyboard.is_pressed(name) for name in ("ctrl", "shift", "alt")):
-                return True  # Ctrl+End, Shift+End … still work
-            if event.event_type == "down":
-                self.type_next()  # held down, it keeps typing
+    def _catch(self, vk, scan, up):
+        """Decides one key event: False swallows it, True lets it through to the app you're in.
+        Each press is decided once, when it goes down, and its release goes the same way, so an app never
+        gets half a press. Where Right Alt is AltGr (the India layout uses it for ₹), Windows sends a Left Ctrl
+        (scan code 0x21D) along with it; that Ctrl is part of the same press."""
+        key = str(self.config.get("type_key", "right alt")).strip().lower()
+        code = TYPE_KEY_CODES.get(key)
+        altgr_ctrl = code == 0xA5 and vk == 0xA2 and scan == 0x21D
+        if code is None or key == str(self.config.get("hotkey_screen", "")).strip().lower() or (
+                vk != code and not altgr_ctrl):
+            return True  # every other key works as normal
+        press = self.__dict__.get("type_key_press")  # "typing" or "normal" while the key is down
+        if up:
+            if vk == code:
+                self.type_key_press = None
+            return press != "typing"
+        if press is None:  # a new press
+            on = self.config.get("mode") == "coding" and self.config.get("type_code", True)
+            # A Right Alt tap is always kept from the app in coding mode, even with no code to type yet:
+            # let through, it would open the app's menu bar and take the next letters.
+            wanted = on and (self.typing_left or code == 0xA5)
+            press = "typing" if wanted and not self._combo_held(code) else "normal"
+            self.type_key_press = press
+        if press == "typing":
+            if vk == code:
+                self.type_next()  # held down, it keeps typing (nothing happens when there's nothing to type)
             return False  # swallowed: the editor never sees it
-        except Exception:  # noqa: BLE001
-            return True
+        return True
+
+    def _combo_held(self, code):
+        """Shift, Ctrl or Alt already held down (Shift+End, Ctrl+End …): then the key does its usual job."""
+        import ctypes
+        user32 = ctypes.WinDLL("user32")
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+        held = [0x10] if code == 0xA5 else [0x10, 0x11, 0x12]  # with Right Alt (AltGr) only Shift counts
+        return any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in held)
+
+    def _key_watch(self):
+        """Watches the keyboard for the type key with a Windows hook of its own, so Right Alt is caught
+        even where Windows sends it as AltGr (the keyboard library can't keep that from the app)."""
+        import ctypes
+        from ctypes import wintypes
+        user32, kernel32 = ctypes.WinDLL("user32", use_last_error=True), ctypes.WinDLL("kernel32")
+        LRESULT = ctypes.c_ssize_t
+        HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = LRESULT
+        kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+        class KBDLLHOOKSTRUCT(ctypes.Structure):
+            _fields_ = [("vk", wintypes.DWORD), ("scan", wintypes.DWORD), ("flags", wintypes.DWORD),
+                        ("time", wintypes.DWORD), ("extra", ctypes.c_size_t)]
+
+        def on_key(code, wparam, lparam):
+            if code == 0:
+                try:
+                    key = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                    if not self._catch(key.vk, key.scan, wparam in (0x101, 0x105)):  # WM_KEYUP, WM_SYSKEYUP
+                        return 1  # swallowed
+                except Exception:  # noqa: BLE001
+                    pass
+            return user32.CallNextHookEx(None, code, wparam, lparam)
+
+        self._key_proc = HOOKPROC(on_key)  # kept, so it isn't freed while Windows still calls it
+        if not user32.SetWindowsHookExW(13, self._key_proc, kernel32.GetModuleHandleW(None), 0):  # WH_KEYBOARD_LL
+            log_error(f"Couldn't watch the type key (Windows error {ctypes.get_last_error()})")
+            return
+        message = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:  # the hook needs a message loop
+            user32.TranslateMessage(ctypes.byref(message))
+            user32.DispatchMessageW(ctypes.byref(message))
 
     def _typist(self):
         lines, index, typed = [], 0, None
@@ -2274,7 +2328,8 @@ def add_typing(cls):
     cls.__init__ = __init__
     for name in ("show", "next", "previous", "close"):
         setattr(cls, name, forward(name))
-    cls.type_next, cls._type_key, cls._typist = type_next, _type_key, _typist
+    cls.type_next, cls._catch, cls._combo_held, cls._key_watch, cls._typist = (
+        type_next, _catch, _combo_held, _key_watch, _typist)
 
 
 if not hasattr(CodeLine, "type_next"):  # pasting it twice does no harm
@@ -2283,7 +2338,7 @@ if not hasattr(CodeLine, "type_next"):  # pasting it twice does no harm
 
 # ======================================================================================================
 # Tray option "Show the faint code line". Untick it and the faint line never appears on screen; typing with
-# End, Page Down / Page Up and everything else keep working. Tick it again and the line comes back.
+# Right Alt, Page Down / Page Up and everything else keep working. Tick it again and the line comes back.
 # Paste this block just below the typing block, still above the last two lines of study_watch.py:
 #     if __name__ == "__main__":
 #         main()
