@@ -48,7 +48,7 @@ DEFAULTS = {
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
     "caps_lights": False,
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
-    "label_style": "tooltip",    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
+    "label_style": "light",    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
     "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
@@ -782,8 +782,8 @@ def show_label(target, text, seconds=8, style="tooltip"):
         key = "#9aa0a9"  # nearly the text colour, so the letters' soft edges blend in cleanly
         root.configure(bg=key)
         root.attributes("-transparentcolor", key)  # everything but the letters is see-through
-        tk.Label(root, text=text, font=("Segoe UI", 40, "bold"), fg="#9ba1aa", bg=key).pack()
-        peak = 0.75
+        tk.Label(root, text=text, font=("Segoe UI", 26, "bold"), fg="#9ba1aa", bg=key).pack()
+        peak = 0.55  # how solid the number is at its brightest (1 = fully solid)
     else:
         frame = tk.Frame(root, bg="#767676", padx=1, pady=1)  # the thin grey border
         frame.pack()
@@ -1214,7 +1214,7 @@ class StudyWatch:
             if self.config.get("caps_lights"):
                 threading.Thread(target=caps_count, args=(lights_letters(result),), daemon=True).start()
             if self.config.get("point_answer") and not region:
-                threading.Thread(target=point_at_answer, args=(image, result, self.config.get("label_style", "tooltip")),
+                threading.Thread(target=point_at_answer, args=(image, result, self.config.get("label_style", "light")),
                                  daemon=True).start()
             self.send_overview()
             self.set_status("idle")
@@ -1548,7 +1548,7 @@ def main():
 
         where = POINT()
         ctypes.windll.user32.GetCursorPos(ctypes.byref(where))
-        threading.Thread(target=show_label, args=((where.x, where.y), "12", 5, app.config.get("label_style", "tooltip")),
+        threading.Thread(target=show_label, args=((where.x, where.y), "12", 5, app.config.get("label_style", "light")),
                          daemon=True).start()
 
     def set_label_style(style):
@@ -1592,7 +1592,7 @@ def main():
                          checked=lambda item: app.config.get("point_answer")),
         pystray.MenuItem("Number label style", pystray.Menu(
             pystray.MenuItem("Tooltip (Windows pop-up)", lambda icon, item: set_label_style("tooltip"),
-                             checked=lambda item: app.config.get("label_style", "tooltip") == "tooltip", radio=True),
+                             checked=lambda item: app.config.get("label_style", "light") == "tooltip", radio=True),
             pystray.MenuItem("Light see-through number", lambda icon, item: set_label_style("light"),
                              checked=lambda item: app.config.get("label_style") == "light", radio=True),
             pystray.Menu.SEPARATOR,
