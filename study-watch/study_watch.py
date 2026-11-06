@@ -46,6 +46,7 @@ DEFAULTS = {
     "ready_message": True,
     "lights": False,
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
+    "lights_address": "",        # the box's Bluetooth address, e.g. "A0:B1:C2:D3:E4:F5" (saved once found)
 }
 
 DEFAULT_RULES = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
@@ -538,7 +539,8 @@ class BleLights:
     """Keeps a Bluetooth Low Energy link to the quiz-lights box (advertised as "QuizLights") and
     reconnects by itself. Messages are the same text as over Wi-Fi: "B", "B,-,D", "none", "mode binary"."""
 
-    def __init__(self, wanted, on_change):
+    def __init__(self, wanted, on_change, config=None):
+        self.config = config if config is not None else {}
         self.wanted = wanted          # () -> bool: only search while quiz lights over Bluetooth is on
         self.on_change = on_change    # called with True/False when the link comes up or drops
         self.connected = False
@@ -584,12 +586,23 @@ class BleLights:
                 continue
             wait = 2
             try:
-                device = await BleakScanner.find_device_by_filter(is_box, timeout=8)
-                last_error = None
-                if device is None:
-                    self._reason("box not found (is it powered and within ~10 m?)")
-                    continue
-                async with BleakClient(device, timeout=15) as client:
+                # A known address connects directly, without scanning. Some laptops' Bluetooth can
+                # connect but refuses to scan ("device not ready"), so this also works around that.
+                target = self.config.get("lights_address", "").strip()
+                if not target:
+                    device = await BleakScanner.find_device_by_filter(is_box, timeout=8)
+                    last_error = None
+                    if device is None:
+                        self._reason("box not found (is it powered and within ~10 m?)")
+                        continue
+                    target = device
+                async with BleakClient(target, timeout=15) as client:
+                    if not isinstance(target, str):  # found by scanning: remember it for next time
+                        self.config["lights_address"] = client.address
+                        try:
+                            save_config(self.config)
+                        except Exception:  # noqa: BLE001
+                            log_error(traceback.format_exc())
                     while not self.queue.empty():
                         self.queue.get_nowait()  # nothing stale from before the link came up
                     self.reason = "connected"
@@ -603,7 +616,8 @@ class BleLights:
             except Exception as error:  # noqa: BLE001 - out of range, switched off, Bluetooth off: just retry
                 text = str(error)
                 if "not ready" in text.lower() or getattr(error, "winerror", None) == -2147020577:
-                    self._reason("the laptop's Bluetooth is off. Turn it on in Windows")
+                    self._reason("Windows won't scan for Bluetooth. Put the box's address in Settings "
+                                 "(\"lights_address\")")
                     wait = 5
                 else:
                     self._reason("couldn't connect, retrying")
@@ -1138,7 +1152,7 @@ def main():
     app.status_callback = show_status
     app.watch.ble = BleLights(
         lambda: bool(app.config.get("lights")) and app.config.get("lights_link", "bluetooth") == "bluetooth",
-        lambda connected: show_status(status["state"]))
+        lambda connected: show_status(status["state"]), app.config)
     hotkey_ok = register_hotkeys()
     threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
     threading.Thread(target=app.watch.listen, args=(app.handle_command, app.stop), daemon=True).start()

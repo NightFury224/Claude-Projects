@@ -127,10 +127,16 @@ void setup() {
   adv->setScanResponse(true);
   BLEDevice::startAdvertising();
   Serial.println("Ready: waiting for Study Watch over Bluetooth (QuizLights)");
+  Serial.println("Bluetooth address: " + String(BLEDevice::getAddress().toString().c_str()));
 }
 
 void loop() {
   checkButton();
+  static unsigned long lastAddress = 0;  // repeat the address, so it's visible whenever Serial Monitor opens
+  if (!linked && millis() - lastAddress > 5000) {
+    lastAddress = millis();
+    Serial.println("Bluetooth address: " + String(BLEDevice::getAddress().toString().c_str()));
+  }
   if (linkChanged) {
     linkChanged = false;
     Serial.println(linked ? "Laptop connected" : "Laptop disconnected, advertising again");
