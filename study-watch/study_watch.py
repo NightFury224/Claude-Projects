@@ -115,9 +115,9 @@ comma-separated, with "-" for a question that has no lettered options: one lette
 of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when options are labelled
 A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Empty if no
 question has options.
-"point": where the correct option of the FIRST question with lettered options is, in the LAST image (the
-current screen): the centre of that option's letter label, as fractions of the image width and height,
-e.g. "0.18,0.62". Empty if no question on this screen has lettered options.
+"point": where the correct option of EACH question with lettered options is, in the LAST image (the current
+screen), in the same order as "answer": the centre of that option's letter label, as fractions of the image
+width and height, separated by ";", e.g. "0.18,0.42; 0.18,0.81". Empty if no question has lettered options.
 "numbers": for each question in the same order, its answer as a plain number with at most 2 decimals
 (12, 0.33, 54080, -4.5; round, no units or commas) when the question has NO lettered options and the answer
 is one number; "-" otherwise. Comma-separated, e.g. "12" or "-,4.25". Empty if no question qualifies."""
@@ -295,15 +295,25 @@ def option_list(value):
 
 
 def point_value(value):
-    """The model's "point" ("0.18,0.62", [0.18, 0.62]) → (0.18, 0.62) as fractions of the image, or None."""
-    items = value if isinstance(value, (list, tuple)) else re.findall(r"-?\d+(?:\.\d+)?", str(value or ""))
-    try:
-        x, y = (float(v) for v in items[:2])
-    except (TypeError, ValueError):
-        return None
-    if x > 1 or y > 1:  # percentages, e.g. "18,62"
-        x, y = x / 100, y / 100
-    return (x, y) if 0 <= x <= 1 and 0 <= y <= 1 else None
+    """The model's "point" ("0.18,0.42; 0.18,0.81", [[0.18, 0.42]]) → [(0.18, 0.42), (0.18, 0.81)] as fractions
+    of the image. None if there's no usable spot."""
+    if isinstance(value, (list, tuple)) and value and isinstance(value[0], (list, tuple)):
+        groups = [list(v) for v in value]
+    elif isinstance(value, (list, tuple)):
+        groups = [list(value)]
+    else:
+        groups = [re.findall(r"-?\d+(?:\.\d+)?", g) for g in str(value or "").split(";")]
+    points = []
+    for items in groups:
+        try:
+            x, y = (float(v) for v in items[:2])
+        except (TypeError, ValueError):
+            continue
+        if x > 1 or y > 1:  # percentages, e.g. "18,62"
+            x, y = x / 100, y / 100
+        if 0 <= x <= 1 and 0 <= y <= 1:
+            points.append((x, y))
+    return points or None
 
 
 def number_list(value):
@@ -325,11 +335,24 @@ def number_list(value):
     return numbers if any(n != "-" for n in numbers) else []
 
 
+def answer_numbers(answer):
+    """Plain-number answers read from the answer text ("Q1: 12 · Q2: x = 4.25 cm" → ["12", "4.25"]), for
+    when the model leaves "numbers" empty. "-" for anything that isn't one number."""
+    numbers = []
+    for part in answer_parts(answer):
+        part = re.sub(r"^\s*(?:Q\.?\s*\d+|\d+[.)])\s*[:.)-]?\s*", "", part.strip())
+        found = re.fullmatch(r"(?:[A-Za-z]\s*=\s*)?(-?[\d,]*\.?\d+)\s*(?:[A-Za-z°%²³]{1,6})?", part)
+        numbers.append((number_list(found.group(1).replace(",", "")) or ["-"])[0] if found else "-")
+    return numbers
+
+
 def lights_message(result):
     """What the quiz lights get, one token per question: "C" for an option, ":12.5" for a number (shown by the
     binary mode; counting shows nothing for it), "-" for neither. None when there's nothing to show."""
     letters = lights_letters(result)
     numbers = result.get("numbers") or []
+    if not numbers:
+        numbers = answer_numbers(result["answer"])
     if len(numbers) != len(letters):
         numbers = numbers if len(letters) == 1 and len(numbers) == 1 else []
     tokens = []
@@ -723,23 +746,33 @@ def glide_pointer(target, seconds=0.5):
         time.sleep(seconds / steps)
 
 
+POINT_HOLD_S = 5.0  # how long the pointer stays on each answer before moving to the next question's
+
+
 def point_at_answer(image, result):
-    """Moves the pointer onto the correct option of the first question with options. The AI gives a rough
-    spot; Windows text recognition snaps it onto the option's letter label when it can find it."""
+    """Moves the pointer onto the correct option of each question with options, one after another, staying on
+    each for a few seconds (it ends on the last one). The AI gives a rough spot; Windows text recognition snaps
+    it onto the option's letter label when it can find it."""
     if sys.platform != "win32" or not result.get("point") or LAST_LAYOUT is None:
         return
     letters = [l for l in lights_letters(result) if l != "-"]
     if not letters:
         return
-    x, y = result["point"][0] * image.width, result["point"][1] * image.height
     try:
-        spot = find_option(ocr_lines(image), letters[0], (x, y), max_distance=image.height * 0.2)
+        lines = ocr_lines(image)
+    except Exception:  # noqa: BLE001 - text recognition is only a refinement; the AI's spots still work
+        lines = []
+        log_error("Pointer: text recognition failed, using the AI's position\n" + traceback.format_exc(limit=2))
+    for i, (letter, (fx, fy)) in enumerate(zip(letters, result["point"])):
+        x, y = fx * image.width, fy * image.height
+        spot = find_option(lines, letter, (x, y), max_distance=image.height * 0.2)
         if spot:
             x, y = spot
-    except Exception:  # noqa: BLE001 - text recognition is only a refinement; the AI's spot still works
-        log_error("Pointer: text recognition failed, using the AI's position\n" + traceback.format_exc(limit=2))
-    target = image_to_screen(x, y)
-    if target:
+        target = image_to_screen(x, y)
+        if not target:
+            continue
+        if i:
+            time.sleep(POINT_HOLD_S)
         glide_pointer(target)
 
 

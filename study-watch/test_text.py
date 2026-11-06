@@ -120,7 +120,8 @@ print("caps ok")
 
 # Pointing at the answer.
 from types import SimpleNamespace as _R
-assert s.point_value("0.18,0.62") == (0.18, 0.62) and s.point_value("18, 62") == (0.18, 0.62)
+assert s.point_value("0.18,0.62") == [(0.18, 0.62)] and s.point_value("18, 62") == [(0.18, 0.62)]
+assert s.point_value("0.18,0.42; 0.2,0.81") == [(0.18, 0.42), (0.2, 0.81)] and s.point_value([[0.1, 0.2]]) == [(0.1, 0.2)]
 assert s.point_value("") is None and s.point_value("x") is None and s.point_value("150,20") is None
 _lines = [("C) 0.005", 100, 400, 80, 20, _R(x=100, y=400, width=20, height=20)),
           ("C) 1/3", 100, 900, 80, 20, _R(x=100, y=900, width=20, height=20)),
@@ -131,3 +132,10 @@ assert s.find_option(_lines, "D", (300, 420), 300) is None
 s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
 assert s.image_to_screen(110, 410) == (110, 410) and s.image_to_screen(2000, 10) == (-1840, 10)
 print("pointer ok")
+
+# Number answers are found even when the model leaves "numbers" empty.
+assert s.answer_numbers("12") == ["12"] and s.answer_numbers("Q1: x = 4.25 cm · Q2: B) 3") == ["4.25", "-"]
+assert s.answer_numbers("54,080") == ["54080"] and s.answer_numbers("Paris") == ["-"]
+assert s.lights_message({"answer": "12", "numbers": []}) == ":12"
+assert s.lights_message({"answer": "Q1: C) 0.005 · Q2: 7", "options": ["C", "-"], "numbers": []}) == "C,:7"
+print("numbers fallback ok")

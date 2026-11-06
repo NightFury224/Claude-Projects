@@ -1,7 +1,7 @@
 // Quiz Lights, Bluetooth version, for the ESP32-C3 Super Mini. Study Watch on the laptop connects
 // straight to this board (no Wi-Fi, no topic, no setup). One bulb (the board's blue LED) shows answers.
-// Counting (options): one blink per unit, A=1, B=2 ... Binary: long flash = 1, short flash = 0; number answers
-// are shown as the number itself (an extra-long flash is the decimal point), options as A=1, B=2 ...
+// Option answers follow the mode: counting (one blink per unit, A=1, B=2 ...) or binary (A=001 ...).
+// Number answers are always binary: long flash = 1, short flash = 0, an extra-long flash is the decimal point.
 // Arduino IDE: board "ESP32C3 Dev Module", USB CDC On Boot: Enabled. No extra libraries needed.
 
 #include <BLEDevice.h>
@@ -121,8 +121,7 @@ void handle(String m) {
     if (tok.startsWith(":")) {  // a number answer (question without options)
       if (!first) delay(BETWEEN_ANSWERS_MS);
       first = false;
-      if (mode == 2) sendNumber(tok.substring(1));  // binary shows the number
-      else show(0);                                 // counting is for options only: nothing
+      sendNumber(tok.substring(1));  // numbers are always shown in binary, whatever the mode
       continue;
     }
     if (tok == "-" || tok == "NONE") v = 0;
