@@ -99,10 +99,10 @@ Memory across screenshots (the user scrolls through question sets):
 SPLIT_QUESTIONS = """A question cut across two screens:
 - If this screen shows a question but its answer choices (A, B, C…) are cut off below, answer it as best you
   can, and also put the whole question in "context" as "Unfinished question: <full text>".
-- If this screen shows answer choices with no question above them, they belong to the unfinished question in
-  the earlier notes. Answer that question by picking the matching choice: give its letter and value, e.g.
-  "C) 54,080". Never invent a question to fit the choices. If the notes have no unfinished question, answer
-  "Question not visible"."""
+- If this screen shows answer choices with no question above them, they belong to the question just before them,
+  in the earlier notes or earlier screenshots. Answer that question by picking the matching choice: give its letter and value, e.g.
+  "C) 54,080". Never invent a question to fit the choices. If no earlier note or screenshot has that question,
+  answer "Question not visible"."""
 
 REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
@@ -564,7 +564,8 @@ class Claude:
                             + "\n".join(f"- {note}" for note in notes)})
         if earlier_images:
             content.append({"type": "text", "text": f"The {len(earlier_images)} earlier screenshot(s) below are "
-                            "for reference only (charts, tables or passages the questions may need):"})
+                            "for reference only (charts, tables or passages the questions may need, or the question "
+                            "whose answer choices continue on this screen):"})
             content += [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
                         for b64 in earlier_images]
         content.append({"type": "text", "text": "Solve what is on this screen:" if content else "Solve it."})
@@ -817,11 +818,15 @@ class StudyWatch:
                 raise RuntimeError("The AI didn't give a usable answer. Tap Right Ctrl to try again.")
 
             result = ask()
-            if "Need:" in result["answer"] and earlier and not result["new_set"]:
+            not_visible = "question not visible" in result["answer"].lower()
+            if earlier and (not_visible or ("Need:" in result["answer"] and not result["new_set"])):
                 # The notes weren't enough (e.g. it needs a chart no earlier question used):
                 # ask again with the last few screenshots themselves.
+                # Also for bare answer choices whose question was on the previous screen.
                 retry = ask(earlier)
                 result = dict(retry, context=retry["context"] or result["context"])
+                if not_visible and "question not visible" not in result["answer"].lower():
+                    result["new_set"] = False  # it continued the previous question: keep the memory
             if result["new_set"]:
                 self.forget()  # a different question set: old charts and passages must not leak in
             self.remember(result["context"], current)
