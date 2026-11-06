@@ -948,6 +948,7 @@ class CodeLine:
             size = int(self.config.get("code_size", 13))
             font = tkfont.Font(family="Consolas", size=size)
             code.configure(font=font)
+            counter.configure(font=("Segoe UI", max(6, round(size * 0.6))))  # always smaller than the code
             root.attributes("-alpha", max(0.05, min(1.0, float(self.config.get("code_opacity", 0.2)))))
             # A fixed left edge for the whole program, so indentation shows as a real shift to the right.
             screen_h = ctypes.windll.user32.GetSystemMetrics(1)
