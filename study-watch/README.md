@@ -155,3 +155,17 @@ and number labels are not used while it is on, and switching back to **Quiz** re
   using all of them together. After the last line, or with tray → Code line → Start a new problem, it starts fresh.
 - Tray → **Code line**: text size (small / medium / large / extra large; default medium) and see-through level
   (very faint / faint / medium / clear; default faint), plus Next, Hide / show and Close.
+
+## AI: Claude Code on your laptop (no API key)
+
+By default Study Watch asks **Claude Code** on the laptop, signed in with your own Claude account, so no
+OpenRouter key or credit is needed. One-time setup on Windows:
+
+1. Open PowerShell and run: `irm https://claude.ai/install.ps1 | iex`
+   (or install Node.js from nodejs.org and run `npm install -g @anthropic-ai/claude-code`).
+2. In a new PowerShell window run `claude`, sign in with your Claude account, then type `/exit`.
+3. Restart Study Watch.
+
+Tray → **AI**: *Claude Code – Sonnet* (smarter, default), *Claude Code – Haiku* (faster), or *OpenRouter (free models)*.
+Each question takes about 10–20 seconds and uses your Claude plan's limits. If Claude Code is missing,
+not signed in or at its limit, the free OpenRouter models are used instead (when an OpenRouter key is set).

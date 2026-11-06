@@ -35,6 +35,8 @@ LOG_DIR = Path.home() / "Documents" / APP
 
 DEFAULTS = {
     "openrouter_key": "",
+    "ai": "claude-code",         # "claude-code" (Claude Code on this laptop, your Claude account) or "openrouter"
+    "claude_model": "sonnet",    # Claude Code model: "sonnet" (smarter) or "haiku" (faster)
     "model": "auto",
     "hotkey_screen": "right ctrl",
     "hotkey_region": "",
@@ -232,7 +234,7 @@ def load_config(problems=None):
     if not config["hotkey_screen"].strip():
         problems.append('"hotkey_screen" is empty; using "right ctrl".')
         config["hotkey_screen"] = DEFAULTS["hotkey_screen"]
-    if not config["openrouter_key"].strip():
+    if not config["openrouter_key"].strip() and config.get("ai") != "claude-code":
         problems.append("No OpenRouter key yet: tray icon → Settings.")
     if not config["ntfy_topic"]:
         # The topic name is the only thing protecting answers on the public ntfy server: keep it long and random.
@@ -628,6 +630,69 @@ def to_jpeg_base64(image, max_side=1600):
 
 # ---------------------------------------------------------------- OpenRouter
 
+def find_claude_code():
+    """The Claude Code program on this laptop, or None."""
+    import shutil
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (home / ".local" / "bin" / "claude.exe", home / "AppData" / "Roaming" / "npm" / "claude.cmd",
+                      Path(os.environ.get("APPDATA", home)) / "npm" / "claude.cmd"):
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def claude_code(messages, model="sonnet"):
+    """Solves with Claude Code on this laptop (signed in with your Claude account, no API key).
+    [messages] are in the usual chat format; screenshots are saved as files for Claude Code to look at."""
+    import subprocess
+    import tempfile
+
+    program = find_claude_code()
+    if not program:
+        raise RuntimeError("Claude Code isn't installed on this laptop (see the README), so free models are used.")
+    work = Path(tempfile.mkdtemp(prefix="studywatch-"))
+    parts, images = [], 0
+    try:
+        for message in messages:
+            content = message["content"]
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            if message["role"] == "system":
+                parts.append("INSTRUCTIONS:\n")
+            for item in content:
+                if item.get("type") == "text":
+                    parts.append(item["text"])
+                elif item.get("type") == "image_url":
+                    images += 1
+                    path = work / f"screenshot{images}.jpg"
+                    path.write_bytes(base64.b64decode(item["image_url"]["url"].split(",", 1)[1]))
+                    parts.append(f"[Screenshot {images}: look at the image file {path}]")
+        parts.append("\nLook at every screenshot file listed above with the Read tool first. Then reply with the "
+                     "JSON only, nothing else. Do not use any other tools.")
+        result = subprocess.run(
+            [program, "-p", "--model", model, "--allowedTools", "Read", "--max-turns", str(images + 3),
+             "--output-format", "text"],
+            input="\n".join(parts), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=work, timeout=180, creationflags=0x08000000 if sys.platform == "win32" else 0)  # no console window
+        reply = (result.stdout or "").strip()
+        if result.returncode != 0 or not reply:
+            detail = (result.stderr or reply or f"exit code {result.returncode}").strip()[:300]
+            if "limit" in detail.lower():
+                raise RuntimeError(f"Claude usage limit reached: {detail}")
+            if "login" in detail.lower() or "auth" in detail.lower():
+                raise RuntimeError("Claude Code isn't signed in: open a terminal, run claude, and sign in once.")
+            raise RuntimeError(f"Claude Code failed: {detail}")
+        return reply
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Claude Code took over 3 minutes.") from None
+    finally:
+        import shutil
+        shutil.rmtree(work, ignore_errors=True)
+
+
 class Claude:
     """OpenRouter client. By default it uses the best *free* models that can read images, with automatic
     fallback to the next one when a model is busy or rate-limited."""
@@ -691,6 +756,21 @@ class Claude:
         return self._models
 
     def chat(self, messages, max_tokens=1500, skip=0):
+        """Asks the chosen AI. With Claude Code, a retry (skip=1) uses Sonnet, and the last retry or a missing /
+        limited Claude Code falls back to the free OpenRouter models when there is a key."""
+        if self.config.get("ai", "claude-code") == "claude-code":
+            has_key = bool(self.config.get("openrouter_key", "").strip())
+            if skip < 2 or not has_key:
+                try:
+                    return claude_code(messages, "sonnet" if skip else self.config.get("claude_model", "sonnet"))
+                except RuntimeError:
+                    if not has_key:
+                        raise
+                    log_error(traceback.format_exc())
+            return self._openrouter(messages, max_tokens, 0)
+        return self._openrouter(messages, max_tokens, skip)
+
+    def _openrouter(self, messages, max_tokens=1500, skip=0):
         """skip=1 starts from the second-best model, used to retry when the first gave an unusable reply."""
         key = self.config.get("openrouter_key", "").strip()
         if not key:
@@ -1837,6 +1917,18 @@ def main():
         app.config["point_answer"] = not app.config.get("point_answer")
         save_config(app.config)
 
+    def set_ai(ai, model):
+        app.config["ai"] = ai
+        if model:
+            app.config["claude_model"] = model
+        save_config(app.config)
+        if ai == "claude-code" and not find_claude_code():
+            try:
+                app.watch.send("⚠️ Study Watch", "Claude Code isn't installed on this laptop yet, so the free "
+                               "OpenRouter models are used until it is. See the README.", priority=3)
+            except requests.RequestException:
+                pass
+
     def set_mode(mode):
         app.config["mode"] = mode
         save_config(app.config)
@@ -1903,6 +1995,16 @@ def main():
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),
         pystray.MenuItem("Edit AI rules", edit_rules),
         pystray.MenuItem("Reload settings", reload_settings),
+        pystray.MenuItem("AI", pystray.Menu(
+            pystray.MenuItem("Claude Code – Sonnet (smarter)", lambda icon, item: set_ai("claude-code", "sonnet"),
+                             checked=lambda item: app.config.get("ai") == "claude-code"
+                             and app.config.get("claude_model") != "haiku", radio=True),
+            pystray.MenuItem("Claude Code – Haiku (faster)", lambda icon, item: set_ai("claude-code", "haiku"),
+                             checked=lambda item: app.config.get("ai") == "claude-code"
+                             and app.config.get("claude_model") == "haiku", radio=True),
+            pystray.MenuItem("OpenRouter (free models)", lambda icon, item: set_ai("openrouter", None),
+                             checked=lambda item: app.config.get("ai") != "claude-code", radio=True),
+        )),
         pystray.MenuItem("Mode", pystray.Menu(
             pystray.MenuItem("Quiz (options and numbers)", lambda icon, item: set_mode("quiz"),
                              checked=lambda item: app.config.get("mode", "quiz") != "coding", radio=True),
@@ -1994,7 +2096,7 @@ def main():
     threading.Thread(target=app.send_ready, args=(hotkey_ok,), daemon=True).start()
     threading.Thread(target=app.watch.listen, args=(app.handle_command, app.stop), daemon=True).start()
     show_status("idle")
-    if not app.config["openrouter_key"]:
+    if not app.config["openrouter_key"] and (app.config.get("ai") != "claude-code" or not find_claude_code()):
         icon.icon = icons["error"]
         os.startfile(CONFIG_FILE)
     icon.run()
