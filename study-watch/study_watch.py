@@ -46,7 +46,7 @@ DEFAULTS = {
     "ready_message": True,
     "lights": False,
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
-    "lights_address": "",        # the box's Bluetooth address, e.g. "A0:B1:C2:D3:E4:F5" (saved once found)
+    "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
 DEFAULT_RULES = """You answer whatever is asked in a screenshot, for someone reading on a tiny smartwatch.
