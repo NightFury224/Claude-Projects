@@ -46,7 +46,8 @@ DEFAULTS = {
     "ready_message": True,
     "lights": False,
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
-    "caps_lights": False,        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
+    "caps_lights": False,
+    "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
     "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
@@ -108,12 +109,15 @@ SPLIT_QUESTIONS = """A question cut across two screens:
 REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
- "new_set": false, "options": "<letters>", "numbers": "<numbers>"}
+ "new_set": false, "options": "<letters>", "numbers": "<numbers>", "point": "<x,y>"}
 "options": the letter of the ONE CORRECT option for each question answered, in the same order as "answer",
 comma-separated, with "-" for a question that has no lettered options: one letter per question, never a list
 of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when options are labelled
 A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Empty if no
 question has options.
+"point": where the correct option of the FIRST question with lettered options is, in the LAST image (the
+current screen): the centre of that option's letter label, as fractions of the image width and height,
+e.g. "0.18,0.62". Empty if no question on this screen has lettered options.
 "numbers": for each question in the same order, its answer as a plain number with at most 2 decimals
 (12, 0.33, 54080, -4.5; round, no units or commas) when the question has NO lettered options and the answer
 is one number; "-" otherwise. Comma-separated, e.g. "12" or "-,4.25". Empty if no question qualifies."""
@@ -243,6 +247,7 @@ def parse_answer(raw):
             "new_set": data.get("new_set") is True,
             "options": option_list(data.get("options")),
             "numbers": number_list(data.get("numbers")),
+            "point": point_value(data.get("point")),
             "ok": True,
         }
     # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
@@ -260,12 +265,13 @@ def parse_answer(raw):
             "new_set": bool(re.search(r'"new_set"\s*:\s*true', raw)),
             "options": option_list((re.search(r'"options"\s*:\s*"([^"]*)"', raw) or [None, ""])[1]),
             "numbers": number_list((re.search(r'"numbers"\s*:\s*"([^"]*)"', raw) or [None, ""])[1]),
+            "point": point_value((re.search(r'"point"\s*:\s*"([^"]*)"', raw) or [None, ""])[1]),
             "ok": True,
         }
     log_error("Couldn't read the model's reply:\n" + raw)
     text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
     return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": "",
-            "new_set": False, "options": [], "numbers": [], "ok": False}
+            "new_set": False, "options": [], "numbers": [], "point": None, "ok": False}
 
 
 def is_placeholder(text):
@@ -286,6 +292,18 @@ def option_list(value):
             continue
         letters.append(item if re.fullmatch(r"[A-Z]", item) else "-")
     return letters if any(l != "-" for l in letters) else []
+
+
+def point_value(value):
+    """The model's "point" ("0.18,0.62", [0.18, 0.62]) → (0.18, 0.62) as fractions of the image, or None."""
+    items = value if isinstance(value, (list, tuple)) else re.findall(r"-?\d+(?:\.\d+)?", str(value or ""))
+    try:
+        x, y = (float(v) for v in items[:2])
+    except (TypeError, ValueError):
+        return None
+    if x > 1 or y > 1:  # percentages, e.g. "18,62"
+        x, y = x / 100, y / 100
+    return (x, y) if 0 <= x <= 1 and 0 <= y <= 1 else None
 
 
 def number_list(value):
@@ -371,6 +389,9 @@ def split_text(text, size):
 
 # ---------------------------------------------------------------- screenshots
 
+LAST_LAYOUT = None  # [(image x, image y, width, height, screen left, screen top)] of the last whole-screen shot
+
+
 def capture_screen(method="gdi"):
     """The entire screen (every monitor). method is "gdi" or "wgc"; WGC falls back to GDI if it fails."""
     if method == "wgc":
@@ -386,8 +407,11 @@ def capture_gdi():
     import mss
     from PIL import Image
 
+    global LAST_LAYOUT
     with mss.mss() as sct:
-        shot = sct.grab(sct.monitors[0])  # monitor 0 = all monitors together
+        whole = sct.monitors[0]  # monitor 0 = all monitors together
+        shot = sct.grab(whole)
+        LAST_LAYOUT = [(0, 0, shot.width, shot.height, whole["left"], whole["top"])]
         return Image.frombytes("RGB", shot.size, shot.rgb)
 
 
@@ -403,7 +427,16 @@ def capture_wgc():
     content and HDR better than GDI. Like GDI, it shows windows that opt out of capture as black."""
     from PIL import Image
 
+    global LAST_LAYOUT
+    import mss
+
     frames = [wgc_frame(index) for index in range(1, monitor_count() + 1)]
+    with mss.mss() as sct:
+        monitors = sct.monitors[1:]
+    LAST_LAYOUT, x = [], 0
+    for frame, monitor in zip(frames, monitors):
+        LAST_LAYOUT.append((x, 0, frame.width, frame.height, monitor["left"], monitor["top"]))
+        x += frame.width
     if len(frames) == 1:
         return frames[0]
     canvas = Image.new("RGB", (sum(f.width for f in frames), max(f.height for f in frames)))
@@ -613,6 +646,101 @@ class Claude:
             {"role": "system", "content": system_prompt()},
             {"role": "user", "content": content},
         ], max_tokens=8000, skip=skip)  # room for thinking models; only the short fields are shown  # room for the private working (and thinking models); only short fields are shown
+
+
+# ---------------------------------------------------------------- point at the answer (the teacher clicks)
+
+def ocr_lines(image):
+    """Windows' built-in text recognition: [(text, x, y, width, height)] per line, in image pixels."""
+    import asyncio
+
+    async def run():
+        from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
+        from winrt.windows.media.ocr import OcrEngine
+        from winrt.windows.storage.streams import DataWriter
+
+        engine = OcrEngine.try_create_from_user_profile_languages()
+        if engine is None:
+            return []
+        r, g, b = image.convert("RGB").split()
+        from PIL import Image
+        bgra = Image.merge("RGBA", (b, g, r, Image.new("L", image.size, 255)))
+        writer = DataWriter()
+        writer.write_bytes(bgra.tobytes())
+        bitmap = SoftwareBitmap.create_copy_from_buffer(
+            writer.detach_buffer(), BitmapPixelFormat.BGRA8, image.width, image.height, BitmapAlphaMode.PREMULTIPLIED)
+        result = await engine.recognize_async(bitmap)
+        lines = []
+        for line in result.lines:
+            rects = [w.bounding_rect for w in line.words]
+            if not rects:
+                continue
+            x0, y0 = min(r.x for r in rects), min(r.y for r in rects)
+            x1, y1 = max(r.x + r.width for r in rects), max(r.y + r.height for r in rects)
+            first = rects[0]
+            lines.append((line.text, x0, y0, x1 - x0, y1 - y0, first))
+        return lines
+
+    return asyncio.run(run())
+
+
+def find_option(lines, letter, near, max_distance):
+    """The on-screen spot of option [letter] ("C)", "(C)", "C.") closest to [near], or None."""
+    label = re.compile(rf"^\(?{letter}\s*[).:]", re.I)
+    best = None
+    for text, x, y, w, h, first in lines:
+        if not label.match(text.strip()):
+            continue
+        spot = (first.x + first.width / 2, first.y + first.height / 2)  # the letter label itself
+        distance = ((spot[0] - near[0]) ** 2 + (spot[1] - near[1]) ** 2) ** 0.5
+        if distance <= max_distance and (best is None or distance < best[0]):
+            best = (distance, spot)
+    return best[1] if best else None
+
+
+def image_to_screen(x, y):
+    for ix, iy, w, h, left, top in LAST_LAYOUT or []:
+        if ix <= x < ix + w and iy <= y < iy + h:
+            return int(left + x - ix), int(top + y - iy)
+    return None
+
+
+def glide_pointer(target, seconds=0.5):
+    """Moves the mouse smoothly to [target] (screen pixels), so the class can follow it. Never clicks."""
+    import ctypes
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    user32 = ctypes.windll.user32
+    start = POINT()
+    user32.GetCursorPos(ctypes.byref(start))
+    steps = 25
+    for i in range(1, steps + 1):
+        t = i / steps
+        t = t * t * (3 - 2 * t)  # ease in and out
+        user32.SetCursorPos(int(start.x + (target[0] - start.x) * t), int(start.y + (target[1] - start.y) * t))
+        time.sleep(seconds / steps)
+
+
+def point_at_answer(image, result):
+    """Moves the pointer onto the correct option of the first question with options. The AI gives a rough
+    spot; Windows text recognition snaps it onto the option's letter label when it can find it."""
+    if sys.platform != "win32" or not result.get("point") or LAST_LAYOUT is None:
+        return
+    letters = [l for l in lights_letters(result) if l != "-"]
+    if not letters:
+        return
+    x, y = result["point"][0] * image.width, result["point"][1] * image.height
+    try:
+        spot = find_option(ocr_lines(image), letters[0], (x, y), max_distance=image.height * 0.2)
+        if spot:
+            x, y = spot
+    except Exception:  # noqa: BLE001 - text recognition is only a refinement; the AI's spot still works
+        log_error("Pointer: text recognition failed, using the AI's position\n" + traceback.format_exc(limit=2))
+    target = image_to_screen(x, y)
+    if target:
+        glide_pointer(target)
 
 
 # ---------------------------------------------------------------- Caps Lock light (counting)
@@ -935,6 +1063,8 @@ class StudyWatch:
                 self.watch.lights("none")
             if self.config.get("caps_lights"):
                 threading.Thread(target=caps_count, args=(lights_letters(result),), daemon=True).start()
+            if self.config.get("point_answer") and not region:
+                threading.Thread(target=point_at_answer, args=(image, result), daemon=True).start()
             self.send_overview()
             self.set_status("idle")
             self.log_jobs.put(lambda: self.write_log(log_path, image, result, session_id))
@@ -1254,6 +1384,10 @@ def main():
     def lights_mode(mode):
         threading.Thread(target=app.watch.lights, args=(f"mode {mode}",), daemon=True).start()
 
+    def toggle_point(icon, item):
+        app.config["point_answer"] = not app.config.get("point_answer")
+        save_config(app.config)
+
     def toggle_caps(icon, item):
         app.config["caps_lights"] = not app.config.get("caps_lights")
         save_config(app.config)
@@ -1287,6 +1421,8 @@ def main():
         pystray.MenuItem("Edit AI rules", edit_rules),
         pystray.MenuItem("Reload settings", reload_settings),
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
+        pystray.MenuItem("Point the mouse at the answer", toggle_point,
+                         checked=lambda item: app.config.get("point_answer")),
         pystray.MenuItem("Caps Lock light (counting)", toggle_caps,
                          checked=lambda item: app.config.get("caps_lights")),
         pystray.MenuItem("Test quiz lights", test_lights,

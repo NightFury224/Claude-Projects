@@ -117,6 +117,9 @@ After editing, use tray → **Reload settings**.
 ## Quiz lights (classroom game)
 Tray → **Quiz lights** sends each answer's option letter to an ESP32 light box. **Quiz lights connection** picks **Bluetooth** (default: straight from the laptop, no Wi-Fi) or **Wi-Fi** (through ntfy). With Bluetooth the tray icon turns 🟣 purple while the box isn't connected. See [`quiz-lights/README.md`](../quiz-lights/README.md).
 
+## Point the mouse at the answer (classroom)
+Tray → **Point the mouse at the answer**: after each answer, the mouse glides onto the correct option of the first question with options, so the class sees it on the projector. It never clicks; you click it yourself if you want. The AI gives a rough position and Windows' built-in text recognition snaps it onto the option's letter label ("C)"). Whole-screen shots only.
+
 ## Start-up check
 Every time Study Watch starts (and after **Reload settings**), it checks the whole chain: your OpenRouter key, ntfy, phone and watch. Then it sends one notification:
 - **✅ Study Watch ready.** Everything works. If this arrives on your watch, you're set for the session.

@@ -6,3 +6,5 @@ keyboard==0.13.5
 windows-capture==2.0.1
 pyinstaller==6.10.0
 bleak==0.22.3
+winrt-Windows.Media.Ocr>=2,<3
+winrt-Windows.Graphics.Imaging>=2,<3

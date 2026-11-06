@@ -7,7 +7,7 @@ assert s.to_watch_text("a_1 and **bold**") == "a₁ and bold"
 
 parsed = s.parse_answer('```json\n{"question": "Solve x^2=4", "answer": "x = ±2", "steps": ["a", "b"]}\n```')
 assert parsed == {"question": "Solve x²=4", "answer": "x = ±2", "steps": ["a", "b"], "context": "",
-                  "new_set": False, "options": [], "numbers": [], "ok": True}
+                  "new_set": False, "options": [], "numbers": [], "point": None, "ok": True}
 # Plain text (like a thinking model's raw thoughts) is marked unusable, so it's retried, never shown.
 assert s.parse_answer("We need to solve the MCQs. Let's parse: ...")["ok"] is False
 assert all(len(p) <= s.NTFY_LIMIT for p in s.split_text("word " * 2000, s.NTFY_LIMIT))
@@ -117,3 +117,17 @@ print("numbers ok")
 # Caps Lock counting is Windows-only; elsewhere it does nothing (and never raises).
 s.caps_count(["C", "-"])
 print("caps ok")
+
+# Pointing at the answer.
+from types import SimpleNamespace as _R
+assert s.point_value("0.18,0.62") == (0.18, 0.62) and s.point_value("18, 62") == (0.18, 0.62)
+assert s.point_value("") is None and s.point_value("x") is None and s.point_value("150,20") is None
+_lines = [("C) 0.005", 100, 400, 80, 20, _R(x=100, y=400, width=20, height=20)),
+          ("C) 1/3", 100, 900, 80, 20, _R(x=100, y=900, width=20, height=20)),
+          ("B) 0.02", 100, 350, 80, 20, _R(x=100, y=350, width=20, height=20))]
+assert s.find_option(_lines, "C", (300, 420), 300) == (110, 410)   # nearest C), not the B) above it
+assert s.find_option(_lines, "C", (300, 880), 300) == (110, 910)
+assert s.find_option(_lines, "D", (300, 420), 300) is None
+s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
+assert s.image_to_screen(110, 410) == (110, 410) and s.image_to_screen(2000, 10) == (-1840, 10)
+print("pointer ok")
