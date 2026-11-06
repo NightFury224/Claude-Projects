@@ -588,7 +588,8 @@ class BleLights:
             try:
                 # A known address connects directly, without scanning. Some laptops' Bluetooth can
                 # connect but refuses to scan ("device not ready"), so this also works around that.
-                target = self.config.get("lights_address", "").strip()
+                # An empty value saved by an older version still uses the built-in address.
+                target = (self.config.get("lights_address") or DEFAULTS["lights_address"]).strip()
                 if target:
                     # Given a plain address string, bleak scans first anyway. Wrapping the address as a
                     # BLEDevice makes it connect straight to it (BluetoothLEDevice.FromBluetoothAddressAsync).
