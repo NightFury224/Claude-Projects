@@ -113,11 +113,13 @@ REPLY_FORMAT = """Reply with JSON only, "work" first:
 "options": the letter of the ONE CORRECT option for each question answered, in the same order as "answer",
 comma-separated, with "-" for a question that has no lettered options: one letter per question, never a list
 of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when options are labelled
-A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Empty if no
+A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Options with no
+labels at all (just tick boxes or buttons) count as A, B, C… in reading order. Empty if no
 question has options.
-"point": where the correct option of EACH question with lettered options is, in the LAST image (the current
-screen), in the same order as "answer": the centre of that option's letter label, as fractions of the image
-width and height, separated by ";", e.g. "0.18,0.42; 0.18,0.81". Empty if no question has lettered options.
+"point": for EACH question, in the same order as "answer", separated by ";", a spot in the LAST image (the
+current screen) as fractions of the image width and height: for a question with options, the centre of the
+correct option (its letter label, or its text if the options have no labels); for a question answered by
+typing into a box, the centre of that box; "-" otherwise. E.g. "0.18,0.42; -; 0.30,0.77".
 "numbers": for each question in the same order, its answer as a plain number with at most 2 decimals
 (12, 0.33, 54080, -4.5; round, no units or commas) when the question has NO lettered options and the answer
 is one number; "-" otherwise. Comma-separated, e.g. "12" or "-,4.25". Empty if no question qualifies."""
@@ -297,23 +299,24 @@ def option_list(value):
 def point_value(value):
     """The model's "point" ("0.18,0.42; 0.18,0.81", [[0.18, 0.42]]) → [(0.18, 0.42), (0.18, 0.81)] as fractions
     of the image. None if there's no usable spot."""
-    if isinstance(value, (list, tuple)) and value and isinstance(value[0], (list, tuple)):
-        groups = [list(v) for v in value]
+    if isinstance(value, (list, tuple)) and value and isinstance(value[0], (list, tuple, type(None), str)):
+        groups = [list(v) if isinstance(v, (list, tuple)) else re.findall(r"\d+(?:\.\d+)?", str(v or ""))
+                  for v in value]
     elif isinstance(value, (list, tuple)):
         groups = [list(value)]
     else:
-        groups = [re.findall(r"-?\d+(?:\.\d+)?", g) for g in str(value or "").split(";")]
-    points = []
+        groups = [re.findall(r"\d+(?:\.\d+)?", g) for g in str(value or "").split(";")]
+    points = []  # one per question; None where there's no spot
     for items in groups:
         try:
             x, y = (float(v) for v in items[:2])
         except (TypeError, ValueError):
+            points.append(None)
             continue
         if x > 1 or y > 1:  # percentages, e.g. "18,62"
             x, y = x / 100, y / 100
-        if 0 <= x <= 1 and 0 <= y <= 1:
-            points.append((x, y))
-    return points or None
+        points.append((x, y) if 0 <= x <= 1 and 0 <= y <= 1 else None)
+    return points if any(points) else None
 
 
 def number_list(value):
@@ -707,14 +710,26 @@ def ocr_lines(image):
     return asyncio.run(run())
 
 
-def find_option(lines, letter, near, max_distance):
-    """The on-screen spot of option [letter] ("C)", "(C)", "C.") closest to [near], or None."""
+def option_value(answer_part):
+    """The option's text from one answer ("Q2: C) 70 kg" → "70 kg", "70" → "70"), for finding unlabelled options."""
+    part = re.sub(r"^\s*(?:Q\.?\s*\d+|\d+[.)])\s*[:.)-]?\s*", "", answer_part.strip())
+    return re.sub(r"^\(?[A-Za-z]\)\s*|^[A-Za-z]\.\s+", "", part).strip()
+
+
+def find_option(lines, letter, near, max_distance, value=""):
+    """The on-screen spot of the correct option closest to [near], or None: its letter label ("C)", "(C)", "C."),
+    or, for options without labels, the line whose text is the option's [value] ("70")."""
     label = re.compile(rf"^\(?{letter}\s*[).:]", re.I)
+    squash = lambda t: re.sub(r"[\s,]", "", t).lower()
+    wanted = squash(value)
     best = None
     for text, x, y, w, h, first in lines:
-        if not label.match(text.strip()):
+        if label.match(text.strip()):
+            spot = (first.x + first.width / 2, first.y + first.height / 2)  # the letter label itself
+        elif wanted and (squash(text) == wanted or squash(text).endswith(wanted) and len(squash(text)) <= len(wanted) + 3):
+            spot = (x + w / 2, y + h / 2)  # e.g. "☐ 70": the option's text
+        else:
             continue
-        spot = (first.x + first.width / 2, first.y + first.height / 2)  # the letter label itself
         distance = ((spot[0] - near[0]) ** 2 + (spot[1] - near[1]) ** 2) ** 0.5
         if distance <= max_distance and (best is None or distance < best[0]):
             best = (distance, spot)
@@ -749,31 +764,63 @@ def glide_pointer(target, seconds=0.5):
 POINT_HOLD_S = 5.0  # how long the pointer stays on each answer before moving to the next question's
 
 
+def show_label(target, text, seconds=8):
+    """A big floating label next to [target] (screen pixels) for a few seconds, e.g. "= 12" by an answer box.
+    It only shows the number; nothing is typed into the page."""
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    tk.Label(root, text=text, font=("Segoe UI", 28, "bold"), fg="white", bg="#1f7a3a", padx=14, pady=4).pack()
+    root.geometry(f"+{target[0] + 24}+{target[1] - 30}")
+    root.after(int(seconds * 1000), root.destroy)
+    root.mainloop()
+
+
 def point_at_answer(image, result):
-    """Moves the pointer onto the correct option of each question with options, one after another, staying on
-    each for a few seconds (it ends on the last one). The AI gives a rough spot; Windows text recognition snaps
-    it onto the option's letter label when it can find it."""
-    if sys.platform != "win32" or not result.get("point") or LAST_LAYOUT is None:
+    """Visits each question's answer in turn, staying a few seconds on each (it ends on the last one):
+    - a question with options: the pointer goes onto the correct option (never clicks);
+    - a number answer: the pointer goes to the answer box and a label beside it shows the number (nothing typed).
+    The AI gives rough spots; Windows text recognition snaps options onto their label or text when it can."""
+    points = result.get("point")
+    if sys.platform != "win32" or not points or LAST_LAYOUT is None:
         return
-    letters = [l for l in lights_letters(result) if l != "-"]
-    if not letters:
-        return
+    letters = lights_letters(result)
+    numbers = result.get("numbers") or answer_numbers(result["answer"])
+    parts = answer_parts(result["answer"])
+    if len(points) == 1 and len(letters) > 1:  # a single spot: it belongs to the first question with an answer
+        first = next((i for i, l in enumerate(letters) if l != "-" or i < len(numbers) and numbers[i] != "-"), 0)
+        points = [None] * first + points
     try:
-        lines = ocr_lines(image)
+        lines = ocr_lines(image) if any(l != "-" for l in letters) else []
     except Exception:  # noqa: BLE001 - text recognition is only a refinement; the AI's spots still work
         lines = []
         log_error("Pointer: text recognition failed, using the AI's position\n" + traceback.format_exc(limit=2))
-    for i, (letter, (fx, fy)) in enumerate(zip(letters, result["point"])):
-        x, y = fx * image.width, fy * image.height
-        spot = find_option(lines, letter, (x, y), max_distance=image.height * 0.2)
-        if spot:
-            x, y = spot
+    moved = False
+    for i, point in enumerate(points):
+        if point is None or i >= len(letters):
+            continue
+        letter = letters[i]
+        number = numbers[i] if i < len(numbers) else "-"
+        if letter == "-" and number == "-":
+            continue
+        x, y = point[0] * image.width, point[1] * image.height
+        if letter != "-":
+            value = option_value(parts[i]) if i < len(parts) else ""
+            spot = find_option(lines, letter, (x, y), max_distance=image.height * 0.2, value=value)
+            if spot:
+                x, y = spot
         target = image_to_screen(x, y)
         if not target:
             continue
-        if i:
+        if moved:
             time.sleep(POINT_HOLD_S)
         glide_pointer(target)
+        moved = True
+        if letter == "-":  # a number answer: show it beside the box
+            threading.Thread(target=show_label, args=(target, f"= {number}", POINT_HOLD_S + 3),
+                             daemon=True).start()
 
 
 # ---------------------------------------------------------------- Caps Lock light (counting)

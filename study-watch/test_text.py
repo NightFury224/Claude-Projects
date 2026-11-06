@@ -139,3 +139,13 @@ assert s.answer_numbers("54,080") == ["54080"] and s.answer_numbers("Paris") == 
 assert s.lights_message({"answer": "12", "numbers": []}) == ":12"
 assert s.lights_message({"answer": "Q1: C) 0.005 · Q2: 7", "options": ["C", "-"], "numbers": []}) == "C,:7"
 print("numbers fallback ok")
+
+# Unlabelled options and number boxes.
+assert s.point_value("0.2,0.4; -; 0.3,0.8") == [(0.2, 0.4), None, (0.3, 0.8)]
+assert s.option_value("Q2: C) 70 kg") == "70 kg" and s.option_value("70") == "70" and s.option_value("B. 60") == "60"
+_boxes = [("☐ 50", 100, 300, 60, 20, _R(x=100, y=300, width=12, height=20)),
+          ("☐ 70", 100, 360, 60, 20, _R(x=100, y=360, width=12, height=20)),
+          ("☐ 170", 100, 420, 60, 20, _R(x=100, y=420, width=12, height=20))]
+assert s.find_option(_boxes, "B", (120, 365), 200, value="70") == (130, 370)
+assert s.find_option(_boxes, "B", (120, 365), 200, value="") is None
+print("unlabelled ok")
