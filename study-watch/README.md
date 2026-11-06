@@ -146,8 +146,8 @@ and number labels are not used while it is on, and switching back to **Quiz** re
   works out a solution in basic Python 3 (no comprehensions, lambda, sum/sorted, string methods, f-strings or `+=`, unless the question asks for one, then it is used).
 - The first line appears as one faint see-through line in the bottom-left corner of the screen, with a small `1 / 8` counter.
   Indentation shows as a shift to the right. Clicks pass through it.
-- **Right Shift** = next line. **Insert** = hide the line (ask the class what comes next); **Insert** again = show it.
-  Right Shift while hidden moves on quietly.
+- **Page Down** = next line, **Page Up** = previous line (both work only in coding mode). **Insert** = hide the line (ask the class what comes next); **Insert** again = show it.
+  Page Down / Up while hidden moves on quietly.
 - The whole program is also sent to your phone.
 - **Long question?** Press Right Ctrl, scroll, press again (up to 3 screenshots within 5 minutes). Each press solves
   using all of them together. After the last line, or with tray → Code line → Start a new problem, it starts fresh.

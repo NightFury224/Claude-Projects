@@ -891,7 +891,7 @@ def show_label(target, text, seconds=8, style="tooltip"):
 
 class CodeLine:
     """Coding mode: one line of code floating near the bottom of the screen, in faint see-through grey.
-    Right Shift shows the next line, Insert hides / shows it. Clicks pass through and it never takes focus.
+    Page Down / Page Up show the next / previous line, Insert hides / shows it. Clicks pass through and it never takes focus.
     It runs its own small window loop; other threads talk to it through a queue."""
 
     def __init__(self, config, on_done=lambda: None):
@@ -906,6 +906,9 @@ class CodeLine:
 
     def next(self):
         self.commands.put(("next", None))
+
+    def previous(self):
+        self.commands.put(("previous", None))
 
     def toggle(self):
         self.commands.put(("toggle", None))
@@ -992,6 +995,9 @@ class CodeLine:
                     elif command == "next" and self.lines and self.index < len(self.lines):
                         self.index += 1
                         render()  # while hidden it moves on quietly; Insert shows the new line
+                    elif command == "previous" and self.lines and self.index > 0:
+                        self.index -= 1
+                        render()
                     elif command == "toggle" and self.lines:
                         self.hidden = not self.hidden
                         render()
@@ -1717,7 +1723,8 @@ def main():
             log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
             add_hotkey(DEFAULTS["hotkey_screen"], lambda: app.run(region=False))
         if app.config.get("mode") == "coding":  # only in coding mode, so these keys work normally otherwise
-            add_hotkey("right shift", app.code_line.next)
+            add_hotkey("page down", app.code_line.next)      # these two keys are taken over in coding mode
+            add_hotkey("page up", app.code_line.previous)
             add_hotkey("insert", app.code_line.toggle)
         if app.config.get("hotkey_region"):
             try:
@@ -1860,7 +1867,8 @@ def main():
                                         < 0.01)(opacity), radio=True)
               for name, opacity in CODE_OPACITIES.items()],
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Next line (Right Shift)", lambda icon, item: app.code_line.next()),
+            pystray.MenuItem("Next line (Page Down)", lambda icon, item: app.code_line.next()),
+            pystray.MenuItem("Previous line (Page Up)", lambda icon, item: app.code_line.previous()),
             pystray.MenuItem("Hide / show (Insert)", lambda icon, item: app.code_line.toggle()),
             pystray.MenuItem("Close", lambda icon, item: (app.code_line.close(), app.new_code_problem())),
             pystray.MenuItem("Start a new problem (forget earlier screenshots)",
