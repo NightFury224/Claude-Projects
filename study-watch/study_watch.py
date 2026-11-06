@@ -100,8 +100,9 @@ REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
  "new_set": false, "options": "<letters>"}
-"options": the option letter of each answer in the same order as "answer", comma-separated, with "-" for a
-question that has no lettered options, e.g. "C,B" or "B,-,D". Always fill it when options are labelled
+"options": the letter of the ONE CORRECT option for each question answered, in the same order as "answer",
+comma-separated, with "-" for a question that has no lettered options: one letter per question, never a list
+of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when options are labelled
 A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Empty if no
 question has options."""
 
@@ -273,12 +274,26 @@ def option_list(value):
     return letters if any(l != "-" for l in letters) else []
 
 
+def answer_parts(answer):
+    """The separate answers in an answer line ("Q1: B) 27 · Q2: 39°C" → two parts)."""
+    return [p for p in re.split(r"\s·\s|\n|;\s+|\s\|\s", answer) if p.strip()]
+
+
+def lights_letters(result):
+    """The letters for the quiz lights: one per answered question. The model's "options" field is used only
+    when it has exactly one letter per answer, so a list of every choice ("A,B,C,D" for one question) is
+    never shown; otherwise the letters are read from the answer text."""
+    options = result.get("options") or []
+    if options and len(options) == len(answer_parts(result["answer"])):
+        return options
+    return option_letters(result["answer"])
+
+
 def option_letters(answer):
     """The option letter of each answer, in order: "Q1: B) 27 · Q2: 39°C · Q3: D) x" → ["B", "-", "D"].
     "-" marks a question without an option letter. Lone letters ("B") count too."""
     letters = []
-    parts = [p for p in re.split(r"\s·\s|\n|;\s+|\s\|\s", answer) if p.strip()]
-    for part in parts:
+    for part in answer_parts(answer):
         part = re.sub(r"^\s*(?:Q\.?\s*\d+|\d+[.)])\s*[:.)-]?\s*", "", part.strip())
         part = re.sub(r"^(?:option|ans(?:wer)?)\s*[:.-]?\s*", "", part, flags=re.I)
         found = (re.match(r"\(?([A-Za-z])\)", part)                      # "B) 27", "(B) 27"
@@ -805,7 +820,7 @@ class StudyWatch:
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
-            letters = result.get("options") or option_letters(result["answer"])
+            letters = lights_letters(result)
             self.watch.lights(",".join(letters) if any(l != "-" for l in letters) else "none")
             self.send_overview()
             self.set_status("idle")

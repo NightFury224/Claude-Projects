@@ -97,3 +97,10 @@ assert s.option_letters("Q3: C 0.005 · Q4: B 1/3") == ["C", "B"]
 assert s.option_letters("Q3: 0.005 (C)\nQ4: ⅓ (B)") == ["C", "B"]
 assert s.option_letters("Q2: A big dog") == ["-"]
 print("options ok")
+
+# One question: a list of every choice is ignored; the answer text decides.
+assert s.lights_letters({"answer": "C) 54,080", "options": ["A", "B", "C", "D"]}) == ["C"]
+assert s.lights_letters({"answer": "54,080", "options": ["A", "B", "C", "D"]}) == ["-"]
+assert s.lights_letters({"answer": "54,080", "options": ["C"]}) == ["C"]
+assert s.lights_letters({"answer": "Q3: 0.005 · Q4: 1/3", "options": ["C", "B"]}) == ["C", "B"]
+print("lights letters ok")
