@@ -48,8 +48,8 @@ DEFAULTS = {
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
     "caps_lights": False,
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
-    "label_size": 26,            # quiz number label text size (16 small … 34 extra large)
-    "label_opacity": 0.55,       # quiz number label see-through level (0.25 very faint … 0.75 clear)
+    "label_size": 13,            # quiz number label text size, same scale as the code line
+    "label_opacity": 0.2,        # quiz number label see-through level, same scale as the code line
     "mode": "quiz",              # "quiz" (options and numbers) or "coding" (Python, one line at a time)
     "code_size": 13,             # coding mode: text size of the code line (10 small … 22 extra large)
     "code_opacity": 0.2,         # coding mode: how solid the code line is (0.12 very faint … 0.45 clear)
@@ -192,12 +192,10 @@ def system_prompt():
 
 # ---------------------------------------------------------------- settings
 
-LABEL_SIZES = {"small": 16, "medium": 20, "large": 26, "extra large": 34}
-LABEL_OPACITIES = {"very faint": 0.25, "faint": 0.4, "medium": 0.55, "clear": 0.75}
-LABEL_LOOK = {"size": 26, "opacity": 0.55}  # quiz number label; set from the config at start-up and from the tray
-
 CODE_SIZES = {"small": 10, "medium": 13, "large": 17, "extra large": 22}
 CODE_OPACITIES = {"very faint": 0.12, "faint": 0.2, "medium": 0.3, "clear": 0.45}
+LABEL_SIZES, LABEL_OPACITIES = CODE_SIZES, CODE_OPACITIES  # the quiz number uses the same scale as the code line
+LABEL_LOOK = {"size": 13, "opacity": 0.2}  # quiz number label; set from the config at start-up and from the tray
 
 
 def load_config(problems=None):
@@ -246,6 +244,10 @@ def load_config(problems=None):
         config["code_size"] = DEFAULTS["code_size"]
     if config.get("code_opacity") not in CODE_OPACITIES.values():
         config["code_opacity"] = DEFAULTS["code_opacity"]
+    if config.get("label_size") not in LABEL_SIZES.values():
+        config["label_size"] = DEFAULTS["label_size"]
+    if config.get("label_opacity") not in LABEL_OPACITIES.values():
+        config["label_opacity"] = DEFAULTS["label_opacity"]
     return config
 
 
@@ -974,7 +976,7 @@ class CodeLine:
             window.overrideredirect(True)
             window.configure(bg=key)
             window.attributes("-topmost", True, "-alpha", 0.0, "-transparentcolor", key)
-            tk.Label(window, text=text, font=("Segoe UI", LABEL_LOOK["size"], "bold"), fg="#9ba1aa", bg=key).pack()
+            tk.Label(window, text=text, font=("Consolas", LABEL_LOOK["size"]), fg="#9ba1aa", bg=key).pack()
             peak = LABEL_LOOK["opacity"]
             window.geometry(f"+{target[0] + 28}+{target[1] - 28}")
             window.update_idletasks()
@@ -1694,7 +1696,7 @@ def main():
             ctypes.windll.user32.SetProcessDPIAware()
 
     app = StudyWatch()
-    LABEL_LOOK.update(size=int(app.config.get("label_size", 26)), opacity=float(app.config.get("label_opacity", 0.55)))
+    LABEL_LOOK.update(size=int(app.config.get("label_size", 13)), opacity=float(app.config.get("label_opacity", 0.2)))
     global OVERLAY
     app.code_line = OVERLAY = CodeLine(app.config, on_done=app.new_code_problem)
     load_rules()  # make sure rules.txt exists so it can be edited
@@ -1813,7 +1815,7 @@ def main():
     def set_label_look(key, value):
         app.config[key] = value
         save_config(app.config)
-        LABEL_LOOK.update(size=int(app.config.get("label_size", 26)), opacity=float(app.config.get("label_opacity", 0.55)))
+        LABEL_LOOK.update(size=int(app.config.get("label_size", 13)), opacity=float(app.config.get("label_opacity", 0.2)))
         preview_label()
 
     def set_code(key, value):
@@ -1895,13 +1897,13 @@ def main():
                          checked=lambda item: app.config.get("point_answer")),
         pystray.MenuItem("Number label", pystray.Menu(
             *[pystray.MenuItem(f"Size: {name}", (lambda v: lambda icon, item: set_label_look("label_size", v))(size),
-                               checked=(lambda v: lambda item: int(app.config.get("label_size", 26)) == v)(size),
+                               checked=(lambda v: lambda item: int(app.config.get("label_size", 13)) == v)(size),
                                radio=True)
               for name, size in LABEL_SIZES.items()],
             pystray.Menu.SEPARATOR,
             *[pystray.MenuItem(f"See-through: {name}",
                                (lambda v: lambda icon, item: set_label_look("label_opacity", v))(opacity),
-                               checked=(lambda v: lambda item: abs(float(app.config.get("label_opacity", 0.55)) - v)
+                               checked=(lambda v: lambda item: abs(float(app.config.get("label_opacity", 0.2)) - v)
                                         < 0.01)(opacity), radio=True)
               for name, opacity in LABEL_OPACITIES.items()],
             pystray.Menu.SEPARATOR,
