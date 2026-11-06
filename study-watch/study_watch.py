@@ -894,8 +894,9 @@ class CodeLine:
     Right Shift shows the next line, Insert hides / shows it. Clicks pass through and it never takes focus.
     It runs its own small window loop; other threads talk to it through a queue."""
 
-    def __init__(self, config):
+    def __init__(self, config, on_done=lambda: None):
         self.config = config
+        self.on_done = on_done  # called after the last line, so the next press starts a new problem
         self.commands = queue.Queue()
         self.lines, self.index, self.hidden = [], 0, False
         threading.Thread(target=self._thread, daemon=True).start()
@@ -979,6 +980,7 @@ class CodeLine:
             if self.index >= len(self.lines):
                 self.lines, self.index = [], 0
                 root.withdraw()
+                self.on_done()
 
         def poll():
             try:
@@ -1675,7 +1677,7 @@ def main():
             ctypes.windll.user32.SetProcessDPIAware()
 
     app = StudyWatch()
-    app.code_line = CodeLine(app.config)
+    app.code_line = CodeLine(app.config, on_done=app.new_code_problem)
     load_rules()  # make sure rules.txt exists so it can be edited
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
     hotkeys = []
@@ -1785,6 +1787,7 @@ def main():
         save_config(app.config)
         if mode != "coding":
             app.code_line.close()
+        app.new_code_problem()
         register_hotkeys()
 
     def set_code(key, value):
