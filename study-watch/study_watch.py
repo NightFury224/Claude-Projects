@@ -770,7 +770,8 @@ def show_label(target, text, seconds=8, style="tooltip"):
     shows the number; nothing is typed into the page. It fades in and out, and is a layered window: Windows
     blends it with the page behind it.
     - "tooltip": a dark box with a thin grey border, like a Windows tooltip.
-    - "light": just the number in light, see-through grey; no box, and clicks pass through it."""
+    - "light": just the number in light, see-through grey; no box.
+    It follows the mouse pointer, like a badge on the cursor, and clicks always pass through it."""
     import ctypes
     import tkinter as tk
 
@@ -790,15 +791,29 @@ def show_label(target, text, seconds=8, style="tooltip"):
         peak = 0.96
     root.geometry(f"+{target[0] + 28}+{target[1] - 28}")
     root.update_idletasks()
-    try:  # never steal focus from the page; for "light", let clicks pass straight through
+    try:  # never steal focus from the page, and let clicks pass straight through to it
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
         GWL_EXSTYLE, LAYERED, TRANSPARENT, NOACTIVATE, TOOLWINDOW = -20, 0x80000, 0x20, 0x8000000, 0x80
-        extra = LAYERED | NOACTIVATE | TOOLWINDOW | (TRANSPARENT if style == "light" else 0)
+        extra = LAYERED | NOACTIVATE | TOOLWINDOW | TRANSPARENT
         style_bits = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style_bits | extra)
     except Exception:  # noqa: BLE001
         pass
 
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    cursor = POINT()
+
+    def follow():  # stays beside the pointer wherever it moves, about 60 times a second
+        try:
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
+            root.geometry(f"+{cursor.x + 28}+{cursor.y - 28}")
+            root.after(16, follow)
+        except tk.TclError:
+            pass  # the label has closed
+
+    follow()
     steps, fade_ms = 12, 250
 
     def fade(i, direction):
