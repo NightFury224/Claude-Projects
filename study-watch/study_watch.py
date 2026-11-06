@@ -119,7 +119,10 @@ Use BASIC Python 3 only, the most obvious beginner approach, as short and simple
 - Never use: list comprehensions, lambda, map, filter, sorted, sum, min, max, enumerate, zip, any, all, imports,
   string methods (lower, upper, split, join, count, replace, strip, find, isdigit…), f-strings, try/except,
   with, classes, or dictionaries and sets unless the problem truly needs them.
-- Write counters as "count = count + 1", never "+=".
+- Exception: if the problem asks for something specific (a method such as split() or sort(), a dictionary,
+  a list comprehension, a module to import, try/except, a class, recursion…), you MUST use it exactly as asked,
+  because an answer without it is marked wrong. Use only what it asks for; keep everything else basic.
+- Write counters as "count = count + 1", never "+=" (unless the problem asks for +=).
 - If starter code is given, keep its exact names, parameters and lines, and include them in order.
 - If the problem says how input arrives, read it exactly that way; print exactly what it asks for.
 - 4 spaces per indent. No comments and no blank lines.
