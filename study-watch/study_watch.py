@@ -542,6 +542,7 @@ class BleLights:
         self.wanted = wanted          # () -> bool: only search while quiz lights over Bluetooth is on
         self.on_change = on_change    # called with True/False when the link comes up or drops
         self.connected = False
+        self.reason = "searching…"   # shown in the tray tooltip while not connected
         self.loop = None
         self.queue = None
         threading.Thread(target=self._thread, daemon=True).start()
@@ -576,17 +577,22 @@ class BleLights:
             return (device.name == "QuizLights" or adv.local_name == "QuizLights"
                     or LIGHTS_SERVICE in [u.lower() for u in adv.service_uuids])
 
+        last_error = None
         while True:
             if not self.wanted():
                 await asyncio.sleep(2)
                 continue
+            wait = 2
             try:
                 device = await BleakScanner.find_device_by_filter(is_box, timeout=8)
+                last_error = None
                 if device is None:
+                    self._reason("box not found (is it powered and within ~10 m?)")
                     continue
                 async with BleakClient(device, timeout=15) as client:
                     while not self.queue.empty():
                         self.queue.get_nowait()  # nothing stale from before the link came up
+                    self.reason = "connected"
                     self._set(True)
                     while client.is_connected and self.wanted():
                         try:
@@ -594,11 +600,24 @@ class BleLights:
                         except asyncio.TimeoutError:
                             continue
                         await client.write_gatt_char(LIGHTS_CHAR, message.encode(), response=True)
-            except Exception:  # noqa: BLE001 - out of range, switched off, Bluetooth off: just retry
-                log_error("Quiz lights Bluetooth link:\n" + traceback.format_exc(limit=2))
+            except Exception as error:  # noqa: BLE001 - out of range, switched off, Bluetooth off: just retry
+                text = str(error)
+                if "not ready" in text.lower() or getattr(error, "winerror", None) == -2147020577:
+                    self._reason("the laptop's Bluetooth is off. Turn it on in Windows")
+                    wait = 5
+                else:
+                    self._reason("couldn't connect, retrying")
+                if text != last_error:  # log each new problem once, not every 2 seconds
+                    log_error("Quiz lights Bluetooth link:\n" + traceback.format_exc(limit=2))
+                    last_error = text
             finally:
                 self._set(False)
-            await asyncio.sleep(2)
+            await asyncio.sleep(wait)
+
+    def _reason(self, reason):
+        if reason != self.reason:
+            self.reason = reason
+            self.on_change(self.connected)  # refreshes the tray tooltip
 
 
 # ---------------------------------------------------------------- watch delivery (ntfy)
@@ -1110,7 +1129,7 @@ def main():
                  "error": "Study Watch: last request failed (see watch)"}[state]
         if app.config.get("lights") and app.config.get("lights_link", "bluetooth") == "bluetooth":
             box = app.watch.ble is not None and app.watch.ble.connected
-            title += " · light box: " + ("connected" if box else "not connected (searching…)")
+            title += " · light box: " + ("connected" if box else app.watch.ble.reason if app.watch.ble else "starting…")
             if state == "idle" and not box:
                 state = "nobox"
         icon.icon = icons[state]
