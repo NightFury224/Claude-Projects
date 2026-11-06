@@ -159,3 +159,6 @@ assert title == "Evens" and lines == ["n = int(input())", "if n % 2 == 0:", "   
 assert s.parse_code("```python\nx = 1\n\nprint(x)\n```")[1] == ["x = 1", "print(x)"]
 assert s.parse_code("no code here")[1] == []
 print("coding mode ok")
+
+assert s.load_config()["code_size"] in s.CODE_SIZES.values()
+print("code sizes ok")

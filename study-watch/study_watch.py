@@ -48,10 +48,10 @@ DEFAULTS = {
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
     "caps_lights": False,
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
-    "label_style": "light",
+    "label_style": "light",      # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)
     "mode": "quiz",              # "quiz" (options and numbers) or "coding" (Python, one line at a time)
-    "code_size": 24,             # coding mode: text size of the code line
-    "code_opacity": 0.6,         # coding mode: how solid the code line is (0.2 = faint, 0.9 = nearly solid)    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
+    "code_size": 13,             # coding mode: text size of the code line (10 small … 22 extra large)
+    "code_opacity": 0.2,         # coding mode: how solid the code line is (0.12 very faint … 0.45 clear)    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
     "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
@@ -191,6 +191,10 @@ def system_prompt():
 
 # ---------------------------------------------------------------- settings
 
+CODE_SIZES = {"small": 10, "medium": 13, "large": 17, "extra large": 22}
+CODE_OPACITIES = {"very faint": 0.12, "faint": 0.2, "medium": 0.3, "clear": 0.45}
+
+
 def load_config(problems=None):
     """Never fails: a broken config.json starts the app with what can be recovered, and each problem is
     added to [problems] so it can be sent to the watch. A broken file is left as it is for you to fix."""
@@ -232,6 +236,11 @@ def load_config(problems=None):
         config["ntfy_topic"] = "studywatch-" + "".join(secrets.choice(alphabet) for _ in range(20))
     if not broken:
         save_config(config)
+    # Older builds saved bigger sizes and stronger see-through levels; move them onto the new scale.
+    if config.get("code_size") not in CODE_SIZES.values():
+        config["code_size"] = DEFAULTS["code_size"]
+    if config.get("code_opacity") not in CODE_OPACITIES.values():
+        config["code_opacity"] = DEFAULTS["code_opacity"]
     return config
 
 
@@ -935,10 +944,10 @@ class CodeLine:
                 pass
 
         def layout():
-            size = int(self.config.get("code_size", 24))
+            size = int(self.config.get("code_size", 13))
             font = tkfont.Font(family="Consolas", size=size)
             code.configure(font=font)
-            root.attributes("-alpha", max(0.15, min(1.0, float(self.config.get("code_opacity", 0.6)))))
+            root.attributes("-alpha", max(0.05, min(1.0, float(self.config.get("code_opacity", 0.2)))))
             # A fixed left edge for the whole program, so indentation shows as a real shift to the right.
             widest = max([font.measure(line) for line in self.lines] or [0])
             screen_w = ctypes.windll.user32.GetSystemMetrics(0)
@@ -1324,6 +1333,7 @@ class StudyWatch:
         self.screens = []  # [(time, jpeg base64)], newest last
         self.status_callback = lambda state: None
         self.code_line = None  # CodeLine, set up by the tray app on Windows
+        self.code_shots = []   # coding mode: (time, screenshot) parts of the current long problem
         self.stop = threading.Event()
         # The revision log is written by its own thread, after the answer is on its way to the watch.
         self.log_jobs = queue.Queue()
@@ -1410,8 +1420,21 @@ class StudyWatch:
             if image is None:
                 return
             self.set_status("working")
-            content = [{"type": "text", "text": "Solve the Python problem on this screen:"},
-                       {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{to_jpeg_base64(image)}"}}]
+            # A long question can take two or three screenshots: each press within a few minutes adds
+            # the new screenshot to the earlier ones and solves using all of them together.
+            now = time.time()
+            self.code_shots = [(at, shot) for at, shot in self.code_shots if now - at < self.CODE_SHOTS_WINDOW]
+            self.code_shots = (self.code_shots + [(now, image)])[-self.CODE_SHOTS_MAX:]
+            shots = [shot for _, shot in self.code_shots]
+            if len(shots) == 1:
+                content = [{"type": "text", "text": "Solve the Python problem on this screen:"}]
+            else:
+                content = [{"type": "text", "text": (
+                    f"These {len(shots)} screenshots were taken in order while scrolling. Together they are usually "
+                    "ONE long problem: join them (ignore overlap). If the last screenshot shows a different, new "
+                    "problem, solve only that one and ignore the earlier screenshots.")}]
+            content += [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{to_jpeg_base64(shot)}"}}
+                        for shot in shots]
             title, lines = "", []
             for skip in (0, 1):  # a reply without usable code gets one try with the next model
                 raw = self.claude.chat([{"role": "system", "content": CODING_RULES},
@@ -1437,6 +1460,13 @@ class StudyWatch:
                 pass
         finally:
             self.busy.release()
+
+    CODE_SHOTS_WINDOW = 300  # coding mode: screenshots this recent (seconds) count as parts of one problem
+    CODE_SHOTS_MAX = 3
+
+    def new_code_problem(self):
+        """Forget the earlier coding screenshots, so the next press starts a fresh problem."""
+        self.code_shots = []
 
     MEMORY_SIZE = 4      # text notes of shared material
     IMAGE_MEMORY = 2     # screenshots kept for the rare retry when notes aren't enough
@@ -1818,19 +1848,21 @@ def main():
         )),
         pystray.MenuItem("Code line", pystray.Menu(
             *[pystray.MenuItem(f"Size: {name}", (lambda v: lambda icon, item: set_code("code_size", v))(size),
-                               checked=(lambda v: lambda item: int(app.config.get("code_size", 24)) == v)(size),
+                               checked=(lambda v: lambda item: int(app.config.get("code_size", 13)) == v)(size),
                                radio=True)
-              for name, size in (("small", 18), ("medium", 24), ("large", 32), ("extra large", 42))],
+              for name, size in CODE_SIZES.items()],
             pystray.Menu.SEPARATOR,
             *[pystray.MenuItem(f"See-through: {name}",
                                (lambda v: lambda icon, item: set_code("code_opacity", v))(opacity),
-                               checked=(lambda v: lambda item: abs(float(app.config.get("code_opacity", 0.6)) - v)
+                               checked=(lambda v: lambda item: abs(float(app.config.get("code_opacity", 0.2)) - v)
                                         < 0.01)(opacity), radio=True)
-              for name, opacity in (("very faint", 0.3), ("faint", 0.45), ("medium", 0.6), ("clear", 0.8))],
+              for name, opacity in CODE_OPACITIES.items()],
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Next line (Right Shift)", lambda icon, item: app.code_line.next()),
             pystray.MenuItem("Hide / show (Insert)", lambda icon, item: app.code_line.toggle()),
-            pystray.MenuItem("Close", lambda icon, item: app.code_line.close()),
+            pystray.MenuItem("Close", lambda icon, item: (app.code_line.close(), app.new_code_problem())),
+            pystray.MenuItem("Start a new problem (forget earlier screenshots)",
+                             lambda icon, item: app.new_code_problem()),
         ), enabled=lambda item: app.config.get("mode") == "coding"),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),

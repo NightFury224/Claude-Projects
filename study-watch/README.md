@@ -149,5 +149,7 @@ and number labels are not used while it is on, and switching back to **Quiz** re
 - **Right Shift** = next line. **Insert** = hide the line (ask the class what comes next); **Insert** again = show it.
   Right Shift while hidden moves on quietly.
 - The whole program is also sent to your phone.
-- Tray → **Code line**: text size (small / medium / large / extra large) and see-through level
-  (very faint / faint / medium / clear), plus Next, Hide / show and Close.
+- **Long question?** Press Right Ctrl, scroll, press again (up to 3 screenshots within 5 minutes). Each press solves
+  using all of them together. After the last line, or with tray → Code line → Start a new problem, it starts fresh.
+- Tray → **Code line**: text size (small / medium / large / extra large; default medium) and see-through level
+  (very faint / faint / medium / clear; default faint), plus Next, Hide / show and Close.
