@@ -96,6 +96,14 @@ Memory across screenshots (the user scrolls through question sets):
 """
 
 # Fixed: the app reads these fields, so this part is not in rules.txt.
+SPLIT_QUESTIONS = """A question cut across two screens:
+- If this screen shows a question but its answer choices (A, B, C…) are cut off below, answer it as best you
+  can, and also put the whole question in "context" as "Unfinished question: <full text>".
+- If this screen shows answer choices with no question above them, they belong to the unfinished question in
+  the earlier notes. Answer that question by picking the matching choice: give its letter and value, e.g.
+  "C) 54,080". Never invent a question to fit the choices. If the notes have no unfinished question, answer
+  "Question not visible"."""
+
 REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
@@ -117,7 +125,7 @@ def load_rules():
 
 
 def system_prompt():
-    return load_rules() + "\n\n" + REPLY_FORMAT
+    return load_rules() + "\n\n" + SPLIT_QUESTIONS + "\n\n" + REPLY_FORMAT
 
 
 # ---------------------------------------------------------------- settings
