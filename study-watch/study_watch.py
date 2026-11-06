@@ -950,11 +950,9 @@ class CodeLine:
             code.configure(font=font)
             root.attributes("-alpha", max(0.05, min(1.0, float(self.config.get("code_opacity", 0.2)))))
             # A fixed left edge for the whole program, so indentation shows as a real shift to the right.
-            widest = max([font.measure(line) for line in self.lines] or [0])
-            screen_w = ctypes.windll.user32.GetSystemMetrics(0)
             screen_h = ctypes.windll.user32.GetSystemMetrics(1)
-            state["left"] = max(0, (screen_w - widest) // 2 - 90)
-            state["top"] = int(screen_h * 0.80)
+            state["left"] = 30  # bottom-left corner, just above the taskbar
+            state["top"] = int(screen_h * 0.86)
 
         def render():
             if not self.lines:
