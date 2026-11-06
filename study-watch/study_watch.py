@@ -48,7 +48,10 @@ DEFAULTS = {
     "lights_link": "bluetooth",  # "bluetooth" (laptop → box directly) or "wifi" (through ntfy)
     "caps_lights": False,
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
-    "label_style": "light",    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
+    "label_style": "light",
+    "mode": "quiz",              # "quiz" (options and numbers) or "coding" (Python, one line at a time)
+    "code_size": 24,             # coding mode: text size of the code line
+    "code_opacity": 0.6,         # coding mode: how solid the code line is (0.2 = faint, 0.9 = nearly solid)    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
     "lights_address": "ac:27:6e:5d:f6:82",  # the box's Bluetooth address (your ESP32-C3); "" = scan for it
 }
 
@@ -106,6 +109,50 @@ SPLIT_QUESTIONS = """A question cut across two screens:
   in the earlier notes or earlier screenshots. Answer that question by picking the matching choice: give its letter and value, e.g.
   "C) 54,080". Never invent a question to fit the choices. If no earlier note or screenshot has that question,
   answer "Question not visible"."""
+
+CODING_RULES = """A teacher is showing a class of beginners how to solve the Python 3 problem on this screen, one
+line at a time. Read the problem statement and any starter code, and write a complete, correct solution.
+
+Use BASIC Python 3 only, the most obvious beginner approach, as short and simple as possible:
+- Allowed: variables, input(), print(), int(), float(), str(), if/elif/else, for with range(), while, len(),
+  lists (indexing, append), looping over a string or list, string indexing, def/return, and/or/not, %, //.
+- Never use: list comprehensions, lambda, map, filter, sorted, sum, min, max, enumerate, zip, any, all, imports,
+  string methods (lower, upper, split, join, count, replace, strip, find, isdigit…), f-strings, try/except,
+  with, classes, or dictionaries and sets unless the problem truly needs them.
+- Write counters as "count = count + 1", never "+=".
+- If starter code is given, keep its exact names, parameters and lines, and include them in order.
+- If the problem says how input arrives, read it exactly that way; print exactly what it asks for.
+- 4 spaces per indent. No comments and no blank lines.
+- Check it privately by tracing the example by hand before answering.
+
+Reply with JSON only:
+{"work": "<private check: trace the example>", "title": "<the problem in under 40 characters>",
+ "lines": ["<line 1>", "<line 2>", "..."]}
+If there is no coding problem on screen, give "lines": []."""
+
+
+def parse_code(raw):
+    """The coding reply → (title, lines). Falls back to a ```python block if the JSON is broken."""
+    decoder = json.JSONDecoder(strict=False)
+    data = None
+    for match in re.finditer(r"\{", raw):
+        try:
+            candidate, _ = decoder.raw_decode(raw, match.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and "lines" in candidate:
+            data = candidate
+    if data is not None:
+        lines = data.get("lines") or []
+        if isinstance(lines, str):
+            lines = lines.split("\n")
+        title = str(data.get("title") or "Python")
+    else:
+        block = re.search(r"```(?:python)?\n(.*?)```", raw, re.DOTALL)
+        lines, title = (block.group(1).split("\n") if block else []), "Python"
+    lines = [str(line).replace("\t", "    ").rstrip() for line in lines]
+    return title.strip(), [line for line in lines if line.strip()]
+
 
 REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
@@ -830,6 +877,125 @@ def show_label(target, text, seconds=8, style="tooltip"):
     root.mainloop()
 
 
+class CodeLine:
+    """Coding mode: one line of code floating near the bottom of the screen, in faint see-through grey.
+    Right Shift shows the next line, Insert hides / shows it. Clicks pass through and it never takes focus.
+    It runs its own small window loop; other threads talk to it through a queue."""
+
+    def __init__(self, config):
+        self.config = config
+        self.commands = queue.Queue()
+        self.lines, self.index, self.hidden = [], 0, False
+        threading.Thread(target=self._thread, daemon=True).start()
+
+    def show(self, lines):
+        self.commands.put(("show", list(lines)))
+
+    def next(self):
+        self.commands.put(("next", None))
+
+    def toggle(self):
+        self.commands.put(("toggle", None))
+
+    def restyle(self):
+        self.commands.put(("style", None))
+
+    def close(self):
+        self.commands.put(("close", None))
+
+    def _thread(self):
+        if sys.platform != "win32":
+            return
+        import ctypes
+        import tkinter as tk
+        import tkinter.font as tkfont
+
+        key = "#9aa0a9"  # see-through colour: nearly the text colour, so the letters' edges blend in cleanly
+        root = tk.Tk()
+        root.withdraw()
+        root.overrideredirect(True)
+        root.configure(bg=key)
+        root.attributes("-topmost", True, "-transparentcolor", key)
+        counter = tk.Label(root, font=("Segoe UI", 11), fg="#9ba1aa", bg=key, width=6, anchor="e")
+        counter.pack(side="left", padx=(0, 12))
+        code = tk.Label(root, font=("Consolas", 24), fg="#9ba1aa", bg=key, anchor="w", justify="left")
+        code.pack(side="left")
+        state = {"left": 0}
+
+        def click_through():
+            try:
+                hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+                bits = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+                # layered, click-through, never activated, not in the taskbar
+                ctypes.windll.user32.SetWindowLongW(hwnd, -20, bits | 0x80000 | 0x20 | 0x8000000 | 0x80)
+            except Exception:  # noqa: BLE001
+                pass
+
+        def layout():
+            size = int(self.config.get("code_size", 24))
+            font = tkfont.Font(family="Consolas", size=size)
+            code.configure(font=font)
+            root.attributes("-alpha", max(0.15, min(1.0, float(self.config.get("code_opacity", 0.6)))))
+            # A fixed left edge for the whole program, so indentation shows as a real shift to the right.
+            widest = max([font.measure(line) for line in self.lines] or [0])
+            screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+            screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+            state["left"] = max(0, (screen_w - widest) // 2 - 90)
+            state["top"] = int(screen_h * 0.80)
+
+        def render():
+            if not self.lines:
+                root.withdraw()
+                return
+            if self.index >= len(self.lines):
+                code.configure(text="✓ done")
+                counter.configure(text="")
+                root.after(2500, finish)
+            else:
+                code.configure(text=self.lines[self.index])
+                counter.configure(text=f"{self.index + 1} / {len(self.lines)}")
+            root.geometry(f"+{state['left']}+{state['top']}")
+            if self.hidden:
+                root.withdraw()
+            else:
+                root.deiconify()
+                root.attributes("-topmost", True)
+                root.update_idletasks()
+                click_through()
+
+        def finish():
+            if self.index >= len(self.lines):
+                self.lines, self.index = [], 0
+                root.withdraw()
+
+        def poll():
+            try:
+                while True:
+                    command, value = self.commands.get_nowait()
+                    if command == "show":
+                        self.lines, self.index, self.hidden = value, 0, False
+                        layout()
+                        render()
+                    elif command == "next" and self.lines and self.index < len(self.lines):
+                        self.index += 1
+                        render()  # while hidden it moves on quietly; Insert shows the new line
+                    elif command == "toggle" and self.lines:
+                        self.hidden = not self.hidden
+                        render()
+                    elif command == "style":
+                        layout()
+                        render()
+                    elif command == "close":
+                        self.lines, self.index = [], 0
+                        root.withdraw()
+            except queue.Empty:
+                pass
+            root.after(40, poll)
+
+        poll()
+        root.mainloop()
+
+
 def show_label_at_pointer(text, seconds, style):
     import ctypes
 
@@ -1154,6 +1320,7 @@ class StudyWatch:
         self.memory = []  # [(time, note)], newest last
         self.screens = []  # [(time, jpeg base64)], newest last
         self.status_callback = lambda state: None
+        self.code_line = None  # CodeLine, set up by the tray app on Windows
         self.stop = threading.Event()
         # The revision log is written by its own thread, after the answer is on its way to the watch.
         self.log_jobs = queue.Queue()
@@ -1169,6 +1336,8 @@ class StudyWatch:
         threading.Thread(target=self._run, args=(region,), daemon=True).start()
 
     def _run(self, region):
+        if self.config.get("mode") == "coding":
+            return self._run_code(region)
         try:
             image = capture_region() if region else capture_screen(self.config.get("capture", "gdi"))
             if image is None:
@@ -1224,6 +1393,41 @@ class StudyWatch:
             log_error(traceback.format_exc())
             self.set_status("error")
             self.watch.lights("error")
+            try:
+                self.watch.send("⚠️ Study Watch", str(error)[:500], priority=3)
+            except requests.RequestException:
+                pass
+        finally:
+            self.busy.release()
+
+    def _run_code(self, region):
+        """Coding mode: reads the problem (and any starter code) and shows the solution one line at a time."""
+        try:
+            image = capture_region() if region else capture_screen(self.config.get("capture", "gdi"))
+            if image is None:
+                return
+            self.set_status("working")
+            content = [{"type": "text", "text": "Solve the Python problem on this screen:"},
+                       {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{to_jpeg_base64(image)}"}}]
+            title, lines = "", []
+            for skip in (0, 1):  # a reply without usable code gets one try with the next model
+                raw = self.claude.chat([{"role": "system", "content": CODING_RULES},
+                                        {"role": "user", "content": content}], max_tokens=8000, skip=skip)
+                title, lines = parse_code(raw)
+                if lines:
+                    break
+            if not lines:
+                raise RuntimeError("No Python problem found on screen. Tap Right Ctrl to try again.")
+            if self.code_line:
+                self.code_line.show(lines)
+            self.set_status("idle")
+            try:  # the whole program on your phone too, for reference
+                self.watch.send(f"💻 {title}", "\n".join(lines), priority=3)
+            except requests.RequestException:
+                log_error(traceback.format_exc())
+        except Exception as error:  # noqa: BLE001
+            log_error(traceback.format_exc())
+            self.set_status("error")
             try:
                 self.watch.send("⚠️ Study Watch", str(error)[:500], priority=3)
             except requests.RequestException:
@@ -1438,6 +1642,7 @@ def main():
             ctypes.windll.user32.SetProcessDPIAware()
 
     app = StudyWatch()
+    app.code_line = CodeLine(app.config)
     load_rules()  # make sure rules.txt exists so it can be edited
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
     hotkeys = []
@@ -1477,6 +1682,9 @@ def main():
             ok = False
             log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
             add_hotkey(DEFAULTS["hotkey_screen"], lambda: app.run(region=False))
+        if app.config.get("mode") == "coding":  # only in coding mode, so these keys work normally otherwise
+            add_hotkey("right shift", app.code_line.next)
+            add_hotkey("insert", app.code_line.toggle)
         if app.config.get("hotkey_region"):
             try:
                 add_hotkey(app.config["hotkey_region"], lambda: app.run(region=True))
@@ -1539,6 +1747,18 @@ def main():
         app.config["point_answer"] = not app.config.get("point_answer")
         save_config(app.config)
 
+    def set_mode(mode):
+        app.config["mode"] = mode
+        save_config(app.config)
+        if mode != "coding":
+            app.code_line.close()
+        register_hotkeys()
+
+    def set_code(key, value):
+        app.config[key] = value
+        save_config(app.config)
+        app.code_line.restyle()
+
     def preview_label():
         """Shows the label by the mouse pointer, so the class can compare the styles without a question."""
         import ctypes
@@ -1587,6 +1807,29 @@ def main():
         pystray.MenuItem("Settings (key, hotkeys, topic)", settings),
         pystray.MenuItem("Edit AI rules", edit_rules),
         pystray.MenuItem("Reload settings", reload_settings),
+        pystray.MenuItem("Mode", pystray.Menu(
+            pystray.MenuItem("Quiz (options and numbers)", lambda icon, item: set_mode("quiz"),
+                             checked=lambda item: app.config.get("mode", "quiz") != "coding", radio=True),
+            pystray.MenuItem("Coding (Python, line by line)", lambda icon, item: set_mode("coding"),
+                             checked=lambda item: app.config.get("mode") == "coding", radio=True),
+        )),
+        pystray.MenuItem("Code line", pystray.Menu(
+            *[pystray.MenuItem(f"Size: {name}", (lambda v: lambda icon, item: set_code("code_size", v))(size),
+                               checked=(lambda v: lambda item: int(app.config.get("code_size", 24)) == v)(size),
+                               radio=True)
+              for name, size in (("small", 18), ("medium", 24), ("large", 32), ("extra large", 42))],
+            pystray.Menu.SEPARATOR,
+            *[pystray.MenuItem(f"See-through: {name}",
+                               (lambda v: lambda icon, item: set_code("code_opacity", v))(opacity),
+                               checked=(lambda v: lambda item: abs(float(app.config.get("code_opacity", 0.6)) - v)
+                                        < 0.01)(opacity), radio=True)
+              for name, opacity in (("very faint", 0.3), ("faint", 0.45), ("medium", 0.6), ("clear", 0.8))],
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Next line (Right Shift)", lambda icon, item: app.code_line.next()),
+            pystray.MenuItem("Hide / show (Insert)", lambda icon, item: app.code_line.toggle()),
+            pystray.MenuItem("Close", lambda icon, item: app.code_line.close()),
+        ), enabled=lambda item: app.config.get("mode") == "coding"),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quiz lights", toggle_lights, checked=lambda item: app.config.get("lights")),
         pystray.MenuItem("Point the mouse at the answer", toggle_point,
                          checked=lambda item: app.config.get("point_answer")),

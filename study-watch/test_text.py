@@ -153,3 +153,9 @@ print("unlabelled ok")
 # A question whose options are cut off, with a number answer, still shows the number.
 assert s.lights_message({"answer": "54080", "options": [], "numbers": [], "context": "Unfinished question: …"}) == ":54080"
 print("unfinished number ok")
+
+title, lines = study_watch.parse_code('{"work":"x","title":"Evens","lines":["n = int(input())","if n % 2 == 0:","\tprint(1)",""]}')
+assert title == "Evens" and lines == ["n = int(input())", "if n % 2 == 0:", "    print(1)"], lines
+assert study_watch.parse_code("```python\nx = 1\n\nprint(x)\n```")[1] == ["x = 1", "print(x)"]
+assert study_watch.parse_code("no code here")[1] == []
+print("coding mode ok")

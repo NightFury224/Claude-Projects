@@ -136,3 +136,18 @@ A mistake in `config.json` never stops the app. It starts with the values it can
 
 ## For developers
 One Python file (`study_watch.py`), built into a single `.exe` with PyInstaller by GitHub Actions (`.github/workflows/build-study-watch.yml`). Run `python test_text.py` to check the maths and splitting helpers.
+
+## Coding mode (Python, one line at a time)
+
+Tray → **Mode → Coding (Python, line by line)**. It is separate from the quiz mode: quiz lights, pointer
+and number labels are not used while it is on, and switching back to **Quiz** restores them unchanged.
+
+- **Right Ctrl** (or a tap on the light box BOOT button) reads the problem and any starter code and
+  works out a solution in basic Python 3 (no comprehensions, lambda, sum/sorted, string methods, f-strings or `+=`).
+- The first line appears as one faint see-through line near the bottom of the screen, with a small `1 / 8` counter.
+  Indentation shows as a shift to the right. Clicks pass through it.
+- **Right Shift** = next line. **Insert** = hide the line (ask the class what comes next); **Insert** again = show it.
+  Right Shift while hidden moves on quietly.
+- The whole program is also sent to your phone.
+- Tray → **Code line**: text size (small / medium / large / extra large) and see-through level
+  (very faint / faint / medium / clear), plus Next, Hide / show and Close.
