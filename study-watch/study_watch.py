@@ -49,6 +49,8 @@ DEFAULTS = {
     "caps_lights": False,
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
     "label_style": "light",      # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)
+    "label_size": 26,            # quiz number label text size (16 small … 34 extra large)
+    "label_opacity": 0.55,       # quiz number label see-through level (0.25 very faint … 0.75 clear)
     "mode": "quiz",              # "quiz" (options and numbers) or "coding" (Python, one line at a time)
     "code_size": 13,             # coding mode: text size of the code line (10 small … 22 extra large)
     "code_opacity": 0.2,         # coding mode: how solid the code line is (0.12 very faint … 0.45 clear)    # number label by an answer box: "tooltip" (Windows-style box) or "light" (see-through text)        # also blink the laptop's Caps Lock light: A = 1 blink, B = 2 ...
@@ -190,6 +192,10 @@ def system_prompt():
 
 
 # ---------------------------------------------------------------- settings
+
+LABEL_SIZES = {"small": 16, "medium": 20, "large": 26, "extra large": 34}
+LABEL_OPACITIES = {"very faint": 0.25, "faint": 0.4, "medium": 0.55, "clear": 0.75}
+LABEL_LOOK = {"size": 26, "opacity": 0.55}  # quiz number label; set from the config at start-up and from the tray
 
 CODE_SIZES = {"small": 10, "medium": 13, "large": 17, "extra large": 22}
 CODE_OPACITIES = {"very faint": 0.12, "faint": 0.2, "medium": 0.3, "clear": 0.45}
@@ -841,13 +847,14 @@ def show_label(target, text, seconds=8, style="tooltip"):
         key = "#9aa0a9"  # nearly the text colour, so the letters' soft edges blend in cleanly
         root.configure(bg=key)
         root.attributes("-transparentcolor", key)  # everything but the letters is see-through
-        tk.Label(root, text=text, font=("Segoe UI", 26, "bold"), fg="#9ba1aa", bg=key).pack()
-        peak = 0.55  # how solid the number is at its brightest (1 = fully solid)
+        tk.Label(root, text=text, font=("Segoe UI", LABEL_LOOK["size"], "bold"), fg="#9ba1aa", bg=key).pack()
+        peak = LABEL_LOOK["opacity"]  # how solid the number is at its brightest (1 = fully solid)
     else:
         frame = tk.Frame(root, bg="#767676", padx=1, pady=1)  # the thin grey border
         frame.pack()
-        tk.Label(frame, text=text, font=("Segoe UI", 22), fg="white", bg="#2b2b2b", padx=14, pady=4).pack()
-        peak = 0.96
+        tk.Label(frame, text=text, font=("Segoe UI", round(LABEL_LOOK["size"] * 0.85)), fg="white", bg="#2b2b2b",
+                 padx=14, pady=4).pack()
+        peak = max(0.6, min(0.96, LABEL_LOOK["opacity"] + 0.4))
     root.geometry(f"+{target[0] + 28}+{target[1] - 28}")
     root.update_idletasks()
     try:  # never steal focus from the page, and let clicks pass straight through to it
@@ -1682,6 +1689,7 @@ def main():
             ctypes.windll.user32.SetProcessDPIAware()
 
     app = StudyWatch()
+    LABEL_LOOK.update(size=int(app.config.get("label_size", 26)), opacity=float(app.config.get("label_opacity", 0.55)))
     app.code_line = CodeLine(app.config, on_done=app.new_code_problem)
     load_rules()  # make sure rules.txt exists so it can be edited
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
@@ -1796,6 +1804,12 @@ def main():
         app.new_code_problem()
         register_hotkeys()
 
+    def set_label_look(key, value):
+        app.config[key] = value
+        save_config(app.config)
+        LABEL_LOOK.update(size=int(app.config.get("label_size", 26)), opacity=float(app.config.get("label_opacity", 0.55)))
+        preview_label()
+
     def set_code(key, value):
         app.config[key] = value
         save_config(app.config)
@@ -1883,6 +1897,17 @@ def main():
                              checked=lambda item: app.config.get("label_style", "light") == "tooltip", radio=True),
             pystray.MenuItem("Light see-through number", lambda icon, item: set_label_style("light"),
                              checked=lambda item: app.config.get("label_style") == "light", radio=True),
+            pystray.Menu.SEPARATOR,
+            *[pystray.MenuItem(f"Size: {name}", (lambda v: lambda icon, item: set_label_look("label_size", v))(size),
+                               checked=(lambda v: lambda item: int(app.config.get("label_size", 26)) == v)(size),
+                               radio=True)
+              for name, size in LABEL_SIZES.items()],
+            pystray.Menu.SEPARATOR,
+            *[pystray.MenuItem(f"See-through: {name}",
+                               (lambda v: lambda icon, item: set_label_look("label_opacity", v))(opacity),
+                               checked=(lambda v: lambda item: abs(float(app.config.get("label_opacity", 0.55)) - v)
+                                        < 0.01)(opacity), radio=True)
+              for name, opacity in LABEL_OPACITIES.items()],
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Preview it", lambda icon, item: preview_label()),
         ), enabled=lambda item: app.config.get("point_answer")),
