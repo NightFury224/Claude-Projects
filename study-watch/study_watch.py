@@ -50,6 +50,7 @@ DEFAULTS = {
     "point_answer": False,       # move the mouse pointer onto the correct option (you click it yourself)
     "label_size": 13,            # quiz number label text size, same scale as the code line
     "label_opacity": 0.2,        # quiz number label see-through level, same scale as the code line
+    "caps_thinking": True,       # flash Caps Lock every 2 seconds while the AI is thinking
     "mode": "quiz",              # "quiz" (options and numbers) or "coding" (Python, one line at a time)
     "code_size": 13,             # coding mode: text size of the code line (10 small … 22 extra large)
     "code_opacity": 0.2,         # coding mode: how solid the code line is (0.12 very faint … 0.45 clear)
@@ -1092,6 +1093,26 @@ CAPS_BETWEEN_S = 3.0        # pause between answers when one screen has several 
 caps_lock = threading.Lock()
 
 
+def caps_thinking(stop):
+    """While the AI is thinking: one short Caps Lock flash every 2 seconds until [stop] is set.
+    Caps Lock is always put back the way it was."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    user32 = ctypes.windll.user32
+
+    def toggle():
+        user32.keybd_event(0x14, 0x3A, 0, 0)
+        user32.keybd_event(0x14, 0x3A, 0x0002, 0)
+        time.sleep(0.02)
+
+    while not stop.wait(2.0):
+        with caps_lock:
+            toggle()
+            time.sleep(0.3)
+            toggle()
+
+
 def caps_count(letters):
     """Counts each answer on the Caps Lock light: A = 1 blink, B = 2 … Number answers and "-" show nothing.
     Caps Lock is put back the way it was afterwards."""
@@ -1346,6 +1367,7 @@ class StudyWatch:
         self.screens = []  # [(time, jpeg base64)], newest last
         self.status_callback = lambda state: None
         self.code_line = None  # CodeLine, set up by the tray app on Windows
+        self.thinking = None   # set while the Caps Lock "thinking" flash runs
         self.code_shots = []   # coding mode: (time, screenshot) parts of the current long problem
         self.stop = threading.Event()
         # The revision log is written by its own thread, after the answer is on its way to the watch.
@@ -1353,7 +1375,17 @@ class StudyWatch:
         threading.Thread(target=self._log_worker, daemon=True).start()
 
     def set_status(self, state):
+        if state == "working" and self.config.get("caps_thinking", True) and self.thinking is None:
+            self.thinking = threading.Event()
+            threading.Thread(target=caps_thinking, args=(self.thinking,), daemon=True).start()
+        elif state != "working":
+            self.stop_thinking()
         self.status_callback(state)
+
+    def stop_thinking(self):
+        if self.thinking is not None:
+            self.thinking.set()
+            self.thinking = None
 
     def run(self, region=False):
         """Hotkey handler: captures, solves and delivers on a background thread."""
@@ -1399,6 +1431,7 @@ class StudyWatch:
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
+            self.stop_thinking()  # before the Caps Lock count, so the two never mix
             message = lights_message(result)
             if message:  # a letter, or a number (even for a question whose options are on the next screen)
                 self.watch.lights(message)
@@ -1834,6 +1867,10 @@ def main():
         ctypes.windll.user32.GetCursorPos(ctypes.byref(where))
         show_label((where.x, where.y), "12", 5)
 
+    def toggle_caps_thinking(icon, item):
+        app.config["caps_thinking"] = not app.config.get("caps_thinking", True)
+        save_config(app.config)
+
     def toggle_caps(icon, item):
         app.config["caps_lights"] = not app.config.get("caps_lights")
         save_config(app.config)
@@ -1911,6 +1948,8 @@ def main():
         ), enabled=lambda item: app.config.get("point_answer")),
         pystray.MenuItem("Caps Lock light (counting)", toggle_caps,
                          checked=lambda item: app.config.get("caps_lights")),
+        pystray.MenuItem("Flash Caps Lock while thinking", toggle_caps_thinking,
+                         checked=lambda item: app.config.get("caps_thinking", True)),
         pystray.MenuItem("Test quiz lights", test_lights,
                          enabled=lambda item: app.config.get("lights") or app.config.get("caps_lights")),
         pystray.MenuItem("Quiz lights connection", pystray.Menu(
