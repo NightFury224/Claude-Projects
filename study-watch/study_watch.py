@@ -99,7 +99,11 @@ Memory across screenshots (the user scrolls through question sets):
 REPLY_FORMAT = """Reply with JSON only, "work" first:
 {"work": "<private working and check>", "question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
- "new_set": false}"""
+ "new_set": false, "options": "<letters>"}
+"options": the option letter of each answer in the same order as "answer", comma-separated, with "-" for a
+question that has no lettered options, e.g. "C,B" or "B,-,D". Always fill it when options are labelled
+A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Empty if no
+question has options."""
 
 
 def load_rules():
@@ -224,6 +228,7 @@ def parse_answer(raw):
             "steps": [step for step in steps if not is_placeholder(step)],
             "context": str(data.get("context") or "").strip(),
             "new_set": data.get("new_set") is True,
+            "options": option_list(data.get("options")),
             "ok": True,
         }
     # Broken JSON (e.g. an unescaped quote): pull the fields out one by one, never show "work".
@@ -239,12 +244,13 @@ def parse_answer(raw):
             "steps": [clean(step) for step in steps if step.strip() and not is_placeholder(step)],
             "context": fields["context"].group(1).strip() if fields["context"] else "",
             "new_set": bool(re.search(r'"new_set"\s*:\s*true', raw)),
+            "options": option_list((re.search(r'"options"\s*:\s*"([^"]*)"', raw) or [None, ""])[1]),
             "ok": True,
         }
     log_error("Couldn't read the model's reply:\n" + raw)
     text = to_watch_text(re.sub(r'"work"\s*:\s*"(?:[^"\\]|\\.)*"\s*,?', "", raw))
     return {"question": "Your question", "answer": text[:300], "steps": split_text(text, 400), "context": "",
-            "new_set": False, "ok": False}
+            "new_set": False, "options": [], "ok": False}
 
 
 def is_placeholder(text):
@@ -254,6 +260,17 @@ def is_placeholder(text):
 def real_answer(answer):
     """A model that is stuck sometimes returns "..." as the answer; say so instead of showing dots."""
     return "No answer: the model couldn't work it out. Try again." if is_placeholder(answer) else answer
+
+
+def option_list(value):
+    """The model's "options" field ("C,B", "B,-,D", ["C", "B"]) → ["C", "B"]. [] if missing or unusable."""
+    items = value if isinstance(value, list) else re.split(r"[,\s·]+", str(value or ""))
+    letters = []
+    for item in (str(i).strip().strip("()").upper() for i in items):
+        if not item:
+            continue
+        letters.append(item if re.fullmatch(r"[A-Z]", item) else "-")
+    return letters if any(l != "-" for l in letters) else []
 
 
 def option_letters(answer):
@@ -788,7 +805,7 @@ class StudyWatch:
             session_id = secrets.token_hex(4)
             log_path = LOG_DIR / f"revision-{datetime.now():%Y-%m}.md"
             self.session = dict(result, id=session_id, next=0, log=log_path)
-            letters = option_letters(result["answer"])
+            letters = result.get("options") or option_letters(result["answer"])
             self.watch.lights(",".join(letters) if any(l != "-" for l in letters) else "none")
             self.send_overview()
             self.set_status("idle")

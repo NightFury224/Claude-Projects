@@ -7,7 +7,7 @@ assert s.to_watch_text("a_1 and **bold**") == "a₁ and bold"
 
 parsed = s.parse_answer('```json\n{"question": "Solve x^2=4", "answer": "x = ±2", "steps": ["a", "b"]}\n```')
 assert parsed == {"question": "Solve x²=4", "answer": "x = ±2", "steps": ["a", "b"], "context": "",
-                  "new_set": False, "ok": True}
+                  "new_set": False, "options": [], "ok": True}
 # Plain text (like a thinking model's raw thoughts) is marked unusable, so it's retried, never shown.
 assert s.parse_answer("We need to solve the MCQs. Let's parse: ...")["ok"] is False
 assert all(len(p) <= s.NTFY_LIMIT for p in s.split_text("word " * 2000, s.NTFY_LIMIT))
@@ -88,3 +88,12 @@ assert s.option_letters("Q1: B) 27 · Q2: 39°C · Q3: d) True") == ["B", "-", "
 assert s.option_letters("(C) Paris") == ["C"] and s.option_letters("E") == ["E"]
 assert s.option_letters("Rs. 6057") == ["-"]
 print("ok")
+
+# The model's own option letters are used even when the answer shows only values.
+_r = s.parse_answer('{"work":"x","question":"q","answer":"0.005 · 1/3","steps":[],"context":"","new_set":false,"options":"C,B"}')
+assert _r["options"] == ["C", "B"], _r
+assert s.option_list("B,-,D") == ["B", "-", "D"] and s.option_list("") == [] and s.option_list("-,-") == []
+assert s.option_letters("Q3: C 0.005 · Q4: B 1/3") == ["C", "B"]
+assert s.option_letters("Q3: 0.005 (C)\nQ4: ⅓ (B)") == ["C", "B"]
+assert s.option_letters("Q2: A big dog") == ["-"]
+print("options ok")
