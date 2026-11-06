@@ -27,12 +27,21 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Build StudyWatch.exe
-        run: pyinstaller --onefile --noconsole --name StudyWatch --collect-all bleak --collect-submodules winrt study_watch.py
+        run: pyinstaller --onefile --noconsole --name StudyWatch --collect-all bleak --collect-all winrt.runtime --collect-all winrt.system --collect-all winrt.windows.devices.bluetooth --collect-all winrt.windows.devices.bluetooth.advertisement --collect-all winrt.windows.devices.bluetooth.genericattributeprofile --collect-all winrt.windows.devices.enumeration --collect-all winrt.windows.foundation --collect-all winrt.windows.foundation.collections --collect-all winrt.windows.storage.streams study_watch.py
 
       - name: Check the text helpers and imports
         run: |
           python test_text.py
           python -c 'import windows_capture, mss, pystray, keyboard; print("imports ok")'
+
+      - name: Check the Bluetooth modules are inside StudyWatch.exe
+        shell: bash
+        run: |
+          pyi-archive_viewer --list --recursive dist/StudyWatch.exe > contents.txt
+          for m in winrt.windows.devices.bluetooth winrt.windows.devices.bluetooth.advertisement winrt.windows.devices.bluetooth.genericattributeprofile winrt.windows.devices.enumeration winrt.windows.foundation winrt.windows.foundation.collections winrt.windows.storage.streams; do
+            grep -qi "$m" contents.txt || { echo "MISSING from the exe: $m"; exit 1; }
+          done
+          echo "all Bluetooth modules bundled"
 
       - uses: actions/upload-artifact@v4
         with:
