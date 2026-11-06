@@ -589,7 +589,15 @@ class BleLights:
                 # A known address connects directly, without scanning. Some laptops' Bluetooth can
                 # connect but refuses to scan ("device not ready"), so this also works around that.
                 target = self.config.get("lights_address", "").strip()
-                if not target:
+                if target:
+                    # Given a plain address string, bleak scans first anyway. Wrapping the address as a
+                    # BLEDevice makes it connect straight to it (BluetoothLEDevice.FromBluetoothAddressAsync).
+                    from types import SimpleNamespace
+                    from bleak.backends.device import BLEDevice
+                    number = int(target.replace(":", "").replace("-", ""), 16)
+                    details = SimpleNamespace(adv=SimpleNamespace(bluetooth_address=number), scan=None)
+                    target = BLEDevice(target.upper(), "QuizLights", details, 0)
+                else:
                     device = await BleakScanner.find_device_by_filter(is_box, timeout=8)
                     last_error = None
                     if device is None:
@@ -597,7 +605,7 @@ class BleLights:
                         continue
                     target = device
                 async with BleakClient(target, timeout=15) as client:
-                    if not isinstance(target, str):  # found by scanning: remember it for next time
+                    if not self.config.get("lights_address"):  # found by scanning: remember it for next time
                         self.config["lights_address"] = client.address
                         try:
                             save_config(self.config)
