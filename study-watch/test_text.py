@@ -64,7 +64,7 @@ s.CONFIG_DIR = Path(tempfile.mkdtemp())
 s.RULES_FILE = s.CONFIG_DIR / "rules.txt"
 assert s.system_prompt().startswith(s.DEFAULT_RULES.strip()) and s.system_prompt().endswith(s.REPLY_FORMAT)
 s.RULES_FILE.write_text("Answer in French.", encoding="utf-8")
-assert s.system_prompt() == "Answer in French.\n\n" + s.REPLY_FORMAT
+assert s.system_prompt() == "Answer in French.\n\n" + s.SPLIT_QUESTIONS + "\n\n" + s.REPLY_FORMAT
 s.RULES_FILE.write_text("  ", encoding="utf-8")  # emptied file falls back to the defaults
 assert s.load_rules() == s.DEFAULT_RULES.strip()
 # A broken config.json still loads: key and topic are rescued, problems are listed, the file is kept.
