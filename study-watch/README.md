@@ -141,7 +141,7 @@ One Python file (`study_watch.py`), built into a single `.exe` with PyInstaller 
 
 ## Coding mode (Python, one line at a time)
 
-Tray → **Mode → Coding (Python, line by line)**. It is separate from the quiz mode: quiz lights, pointer
+Tray → **Mode → Coding (Python, line by line)**, or **hold Right Ctrl for 1 second** to swap between Quiz and Coding mode (the new mode shows briefly by the mouse pointer; a quick tap still solves). It is separate from the quiz mode: quiz lights, pointer
 and number labels are not used while it is on, and switching back to **Quiz** restores them unchanged.
 
 - **Right Ctrl** (or a tap on the light box BOOT button) reads the problem and any starter code and

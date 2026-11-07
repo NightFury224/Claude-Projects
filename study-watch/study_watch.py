@@ -1776,6 +1776,7 @@ def make_icon(colour):
 ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838", "nobox": "#8a4fd0"}
 MODIFIER_KEYS = {"right ctrl", "left ctrl", "right shift", "left shift", "right alt", "left alt",
                  "alt gr", "right windows", "left windows"}
+LONG_PRESS_S = 1.0  # hold Right Ctrl this long to swap between Quiz and Coding mode
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -1828,21 +1829,26 @@ def main():
     icons = {state: make_icon(colour) for state, colour in ICON_COLOURS.items()}
     hotkeys = []
 
-    def add_hotkey(combo, action):
+    def add_hotkey(combo, action, long_action=None):
+        """[long_action] (lone modifiers only): runs instead of [action] when the key is held for 1 second."""
         combo = combo.strip().lower()
         if "+" not in combo and combo in MODIFIER_KEYS:
             # A lone modifier (e.g. right ctrl) fires when tapped on its own, and isn't swallowed,
             # so shortcuts like right ctrl+c keep working.
-            state = {"down": False, "other": False}
+            state = {"down": False, "other": False, "since": 0.0}
 
             def on_key(event):
                 if event.name == combo:
                     if event.event_type == "down" and not state["down"]:
-                        state.update(down=True, other=False)
+                        state.update(down=True, other=False, since=time.time())
                     elif event.event_type == "up" and state["down"]:
                         state["down"] = False
                         if not state["other"]:
-                            action()
+                            held = time.time() - state["since"]
+                            if long_action and held >= LONG_PRESS_S:
+                                threading.Thread(target=long_action, daemon=True).start()
+                            else:
+                                action()
                 elif event.event_type == "down":
                     state["other"] = True
 
@@ -1858,7 +1864,7 @@ def main():
         hotkeys.clear()
         ok = True
         try:
-            add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False))
+            add_hotkey(app.config["hotkey_screen"], lambda: app.run(region=False), long_action=swap_mode)
         except ValueError:
             ok = False
             log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
@@ -1948,6 +1954,16 @@ def main():
             app.code_line.close()
         app.new_code_problem()
         register_hotkeys()
+
+    def swap_mode():
+        """Holding Right Ctrl for a second swaps Quiz ⇄ Coding; the new mode shows briefly by the pointer."""
+        new = "quiz" if app.config.get("mode") == "coding" else "coding"
+        set_mode(new)
+        show_label_at_pointer("Coding mode" if new == "coding" else "Quiz mode", 2, None)
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            pass
 
     def set_label_look(key, value):
         app.config[key] = value
