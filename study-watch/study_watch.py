@@ -1460,6 +1460,18 @@ class StudyWatch:
             threading.Thread(target=caps_thinking, args=(self.thinking,), daemon=True).start()
         elif state != "working":
             self.stop_thinking()
+        self.status_generation = getattr(self, "status_generation", 0) + 1
+        if state == "error":
+            # Recovers by itself: fresh model list next time, and back to ready (blue) after a few seconds,
+            # so the next question can go straight in. The error itself is still on the watch and in errors.log.
+            self.claude._models = None
+            generation = self.status_generation
+
+            def recover():
+                if self.status_generation == generation:
+                    self.set_status("idle")
+
+            threading.Timer(6.0, recover).start()
         self.status_callback(state)
 
     def stop_thinking(self):
