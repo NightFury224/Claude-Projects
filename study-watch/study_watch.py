@@ -1776,7 +1776,7 @@ def make_icon(colour):
 ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838", "nobox": "#8a4fd0"}
 MODIFIER_KEYS = {"right ctrl", "left ctrl", "right shift", "left shift", "right alt", "left alt",
                  "alt gr", "right windows", "left windows"}
-LONG_PRESS_S = 1.0  # hold Right Ctrl this long to swap between Quiz and Coding mode
+LONG_PRESS_S = 3.0  # hold Right Ctrl this long to swap between Quiz and Coding mode
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -1956,10 +1956,11 @@ def main():
         register_hotkeys()
 
     def swap_mode():
-        """Holding Right Ctrl for a second swaps Quiz ⇄ Coding; the new mode shows briefly by the pointer."""
+        """Holding Right Ctrl for 3 seconds swaps Quiz ⇄ Coding. Caps Lock then flashes 2 times for Quiz mode
+        and 4 times for Coding mode (nothing appears on screen)."""
         new = "quiz" if app.config.get("mode") == "coding" else "coding"
         set_mode(new)
-        show_label_at_pointer("Coding mode" if new == "coding" else "Quiz mode", 2, None)
+        threading.Thread(target=caps_count, args=(["D"] if new == "coding" else ["B"],), daemon=True).start()
         try:
             icon.update_menu()
         except Exception:  # noqa: BLE001
