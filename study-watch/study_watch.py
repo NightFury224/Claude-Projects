@@ -36,7 +36,7 @@ LOG_DIR = Path.home() / "Documents" / APP
 DEFAULTS = {
     "openrouter_key": "",
     "ai": "claude-code",         # "claude-code" (Claude Code on this laptop, your Claude account) or "openrouter"
-    "claude_model": "sonnet",    # Claude Code model: "sonnet" (smarter) or "haiku" (faster)
+    "claude_model": "sonnet",    # Claude Code model: "sonnet" (smart), "haiku" (faster) or "opus" (best, slowest)
     "model": "auto",
     "hotkey_screen": "right ctrl",
     "hotkey_region": "",
@@ -776,7 +776,8 @@ class Claude:
             has_key = bool(self.config.get("openrouter_key", "").strip())
             if skip < 2 or not has_key:
                 try:
-                    return claude_code(messages, "sonnet" if skip else self.config.get("claude_model", "sonnet"))
+                    model = self.config.get("claude_model", "sonnet")
+                    return claude_code(messages, "sonnet" if skip and model == "haiku" else model)
                 except RuntimeError:
                     if not has_key:
                         raise
@@ -2105,10 +2106,14 @@ def main():
         pystray.MenuItem("AI", pystray.Menu(
             pystray.MenuItem("Claude Code – Sonnet (smarter)", lambda icon, item: set_ai("claude-code", "sonnet"),
                              checked=lambda item: app.config.get("ai") == "claude-code"
-                             and app.config.get("claude_model") != "haiku", radio=True),
+                             and app.config.get("claude_model") not in ("haiku", "opus"), radio=True),
             pystray.MenuItem("Claude Code – Haiku (faster)", lambda icon, item: set_ai("claude-code", "haiku"),
                              checked=lambda item: app.config.get("ai") == "claude-code"
                              and app.config.get("claude_model") == "haiku", radio=True),
+            pystray.MenuItem("Claude Code – Opus (best at figures, slowest)",
+                             lambda icon, item: set_ai("claude-code", "opus"),
+                             checked=lambda item: app.config.get("ai") == "claude-code"
+                             and app.config.get("claude_model") == "opus", radio=True),
             pystray.MenuItem("OpenRouter (free models)", lambda icon, item: set_ai("openrouter", None),
                              checked=lambda item: app.config.get("ai") != "claude-code", radio=True),
         )),

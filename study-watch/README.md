@@ -166,7 +166,7 @@ OpenRouter key or credit is needed. One-time setup on Windows:
 2. In a new PowerShell window run `claude`, sign in with your Claude account, then type `/exit`.
 3. Restart Study Watch.
 
-Tray → **AI**: *Claude Code – Sonnet* (smarter, default), *Claude Code – Haiku* (faster), or *OpenRouter (free models)*.
+Tray → **AI**: *Claude Code – Sonnet* (smarter, default), *Claude Code – Haiku* (faster), *Claude Code – Opus* (best at figure questions, slowest, uses your limit fastest), or *OpenRouter (free models)*.
 Each question takes about 10–20 seconds and uses your Claude plan's limits. If Claude Code is missing,
 not signed in or at its limit, the free OpenRouter models are used instead (when an OpenRouter key is set).
 
