@@ -169,3 +169,15 @@ OpenRouter key or credit is needed. One-time setup on Windows:
 Tray → **AI**: *Claude Code – Sonnet* (smarter, default), *Claude Code – Haiku* (faster), or *OpenRouter (free models)*.
 Each question takes about 10–20 seconds and uses your Claude plan's limits. If Claude Code is missing,
 not signed in or at its limit, the free OpenRouter models are used instead (when an OpenRouter key is set).
+
+## Saved screenshots
+
+Every screenshot sent to the AI (and only those) is kept, exactly as sent, in
+`Documents\StudyWatch\Screenshots\<date>\<time>-quiz.jpg` (or `-coding.jpg`). No extra screenshots are taken.
+
+## Pointer accuracy
+
+The pointer lands on the middle of the option's letter, or on its tick box / first word for options without
+letters. Option text is matched loosely (O/0, l/1, spacing, long options by their first words), and a misread
+letter is worked out from the other options of the same question. If the option still can't be found, the AI's
+spot is used, moved onto the nearest line of text, and the miss is noted in `errors.log`.

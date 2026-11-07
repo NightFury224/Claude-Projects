@@ -128,7 +128,8 @@ _lines = [("C) 0.005", 100, 400, 80, 20, _R(x=100, y=400, width=20, height=20)),
           ("B) 0.02", 100, 350, 80, 20, _R(x=100, y=350, width=20, height=20))]
 assert s.find_option(_lines, "C", (300, 420), 300) == (110, 410)   # nearest C), not the B) above it
 assert s.find_option(_lines, "C", (300, 880), 300) == (110, 910)
-assert s.find_option(_lines, "D", (300, 420), 300) is None
+assert s.find_option(_lines, "D", (300, 420), 300) == (110, 460)  # worked out from B) and C)
+assert s.find_option(_lines[:1], "D", (300, 420), 300) is None
 s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
 assert s.image_to_screen(110, 410) == (110, 410) and s.image_to_screen(2000, 10) == (-1840, 10)
 print("pointer ok")
@@ -146,7 +147,11 @@ assert s.option_value("Q2: C) 70 kg") == "70 kg" and s.option_value("70") == "70
 _boxes = [("☐ 50", 100, 300, 60, 20, _R(x=100, y=300, width=12, height=20)),
           ("☐ 70", 100, 360, 60, 20, _R(x=100, y=360, width=12, height=20)),
           ("☐ 170", 100, 420, 60, 20, _R(x=100, y=420, width=12, height=20))]
-assert s.find_option(_boxes, "B", (120, 365), 200, value="70") == (130, 370)
+assert s.find_option(_boxes, "B", (120, 365), 200, value="70") == (106, 370)  # its tick box
+assert s.find_option(_boxes, "B", (120, 365), 200, value="7O") == (106, 370)  # O read for 0
+assert s.text_matches("B) The train is faster than the car by 20 km", "The train is faster than the car by 20 km/h")
+assert not s.text_matches("☐ 170", "70")
+assert s.snap_to_line(_boxes, 120, 335, 25) == (120, 310)
 assert s.find_option(_boxes, "B", (120, 365), 200, value="") is None
 print("unlabelled ok")
 

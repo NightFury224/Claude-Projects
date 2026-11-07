@@ -628,6 +628,20 @@ def to_jpeg_base64(image, max_side=1600):
     return base64.b64encode(buffer.getvalue()).decode()
 
 
+SHOTS_DIR = LOG_DIR / "Screenshots"
+
+
+def save_screenshot(image_b64, mode):
+    """Keeps a copy of a screenshot that was sent to the AI (exactly as sent):
+    Documents/StudyWatch/Screenshots/<date>/<time>-<quiz|coding>.jpg"""
+    try:
+        folder = SHOTS_DIR / f"{datetime.now():%Y-%m-%d}"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{datetime.now():%H-%M-%S}-{mode}.jpg").write_bytes(base64.b64decode(image_b64))
+    except OSError:
+        log_error("Couldn't save the screenshot:\n" + traceback.format_exc(limit=2))
+
+
 # ---------------------------------------------------------------- OpenRouter
 
 def find_claude_code():
@@ -864,24 +878,82 @@ def option_value(answer_part):
     return re.sub(r"^\(?[A-Za-z]\)\s*|^[A-Za-z]\.\s+", "", part).strip()
 
 
+OCR_LOOKALIKES = str.maketrans({"o": "0", "l": "1", "i": "1", "|": "1", "s": "5", "b": "6", "z": "2", "g": "9"})
+
+
+def ocr_squash(text):
+    """Text for loose matching: lower case, letters that text recognition mixes up made the same (O/0, l/1 …),
+    and no spaces, commas or other punctuation."""
+    return re.sub(r"[^0-9a-z]", "", text.lower().translate(OCR_LOOKALIKES))
+
+
+def text_matches(line_text, value):
+    """Whether an on-screen line is the option [value], allowing small misreads and a leading label or box."""
+    import difflib
+    wanted = ocr_squash(value)
+    if not wanted:
+        return False
+    text = ocr_squash(re.sub(r"^\W*\(?[A-Za-z]\s*[).:]\s*", "", line_text))  # drop "B) " or "(b)" in front
+    if text == wanted:
+        return True
+    if len(wanted) >= 12 and text.startswith(wanted[:12]):  # a long option: its first words are enough
+        return True
+    if len(wanted) >= 4 and difflib.SequenceMatcher(None, text, wanted).ratio() >= 0.85:
+        return True
+    return False
+
+
 def find_option(lines, letter, near, max_distance, value=""):
-    """The on-screen spot of the correct option closest to [near], or None: its letter label ("C)", "(C)", "C."),
-    or, for options without labels, the line whose text is the option's [value] ("70")."""
-    label = re.compile(rf"^\(?{letter}\s*[).:]", re.I)
-    squash = lambda t: re.sub(r"[\s,]", "", t).lower()
-    wanted = squash(value)
-    best = None
-    for text, x, y, w, h, first in lines:
-        if label.match(text.strip()):
-            spot = (first.x + first.width / 2, first.y + first.height / 2)  # the letter label itself
-        elif wanted and (squash(text) == wanted or squash(text).endswith(wanted) and len(squash(text)) <= len(wanted) + 3):
-            spot = (x + w / 2, y + h / 2)  # e.g. "☐ 70": the option's text
-        else:
-            continue
+    """The exact on-screen spot of the correct option closest to [near], or None:
+    - its letter label ("C)", "(C)", "C."): the middle of the letter itself;
+    - else, for options without labels, the line whose text is the option's [value] ("70"), matched loosely:
+      the start of that line (its tick box or first word);
+    - else the letters of the same question's other options (stacked A, B, C …) show where it must be."""
+    target = letter.upper()
+    label = re.compile(r"^\W*\(?([A-Za-z])\s*[).:]")
+    best, others = None, []
+
+    def consider(spot):
+        nonlocal best
         distance = ((spot[0] - near[0]) ** 2 + (spot[1] - near[1]) ** 2) ** 0.5
         if distance <= max_distance and (best is None or distance < best[0]):
             best = (distance, spot)
-    return best[1] if best else None
+
+    for text, x, y, w, h, first in lines:
+        found = label.match(text.strip())
+        start = (first.x + first.width / 2, first.y + first.height / 2)  # the letter label or tick box
+        if found and found.group(1).upper() == target:
+            consider(start)
+        elif value and text_matches(text, value):
+            consider(start)
+        elif found:
+            others.append((ord(found.group(1).upper()) - ord("A"), start))
+    if best:
+        return best[1]
+    # Work it out from the other options' letters near the AI's spot, e.g. A) and C) found but B) misread.
+    group = [(index, spot) for index, spot in others
+             if abs(spot[1] - near[1]) <= max_distance and abs(spot[0] - near[0]) <= max_distance * 2]
+    if len(group) >= 2 and len({index for index, _ in group}) >= 2:
+        group.sort()
+        (i0, (x0, y0)), (i1, (x1, y1)) = group[0], group[-1]
+        if i1 != i0:
+            step_x, step_y = (x1 - x0) / (i1 - i0), (y1 - y0) / (i1 - i0)
+            want = ord(target) - ord("A")
+            spot = (x0 + step_x * (want - i0), y0 + step_y * (want - i0))
+            if abs(want - i0) <= 6 and ((spot[0] - near[0]) ** 2 + (spot[1] - near[1]) ** 2) ** 0.5 <= max_distance:
+                return spot
+    return None
+
+
+def snap_to_line(lines, x, y, tolerance):
+    """The AI's rough spot moved onto the middle of the nearest text line, so it never sits in a gap."""
+    nearest = None
+    for text, lx, ly, w, h, first in lines:
+        centre = ly + h / 2
+        if lx - tolerance <= x <= lx + w + tolerance and abs(centre - y) <= tolerance:
+            if nearest is None or abs(centre - y) < abs(nearest - y):
+                nearest = centre
+    return (x, nearest) if nearest is not None else (x, y)
 
 
 def image_to_screen(x, y):
@@ -1155,6 +1227,10 @@ def point_at_answer(image, result, label_style=None):
             spot = find_option(lines, letter, (x, y), max_distance=image.height * 0.2, value=value)
             if spot:
                 x, y = spot
+            else:  # not found on screen: the AI's rough spot, moved onto the nearest line
+                x, y = snap_to_line(lines, x, y, image.height * 0.02)
+                log_error(f"Pointer: option {letter} ({value!r}) not found by text recognition; "
+                          "used the AI's position")
         target = image_to_screen(x, y)
         if not target:
             continue
@@ -1496,6 +1572,7 @@ class StudyWatch:
             started = time.time()
             threading.Thread(target=self.watch.lights, args=("thinking",), daemon=True).start()  # drum roll
             current = to_jpeg_base64(image)
+            save_screenshot(current, "quiz")
             notes, earlier = self.recent_notes(), self.recent_images()
 
             def ask(earlier_images=()):
@@ -1563,6 +1640,7 @@ class StudyWatch:
             now = time.time()
             self.code_shots = [(at, shot) for at, shot in self.code_shots if now - at < self.CODE_SHOTS_WINDOW]
             self.code_shots = (self.code_shots + [(now, image)])[-self.CODE_SHOTS_MAX:]
+            save_screenshot(to_jpeg_base64(image), "coding")  # only the new one; earlier ones are saved already
             shots = [shot for _, shot in self.code_shots]
             if len(shots) == 1:
                 content = [{"type": "text", "text": "Solve the Python problem on this screen:"}]
