@@ -40,7 +40,8 @@ DEFAULTS = {
     "model": "auto",
     "hotkey_screen": "right ctrl",
     "hotkey_region": "",
-    "capture": "gdi",
+    "capture": "gdi",            # screenshot method: gdi, imagegrab, printwindow, wgc or dxgi
+    "capture_test": False,       # when True, Right Ctrl cycles through the methods to test them (no solving)
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": "",
     "ntfy_token": "",
@@ -228,8 +229,9 @@ def load_config(problems=None):
         if not isinstance(config.get(key), type(default)):
             problems.append(f'"{key}" should be {type(default).__name__}; using the default.')
             config[key] = default
-    if config["capture"] not in ("gdi", "wgc"):
-        problems.append(f'"capture" must be "gdi" or "wgc", not "{config["capture"]}"; using "gdi".')
+    if config["capture"] not in CAPTURE_METHODS:
+        problems.append(f'"capture" must be one of {", ".join(CAPTURE_METHODS)}, not '
+                        f'"{config["capture"]}"; using "gdi".')
         config["capture"] = "gdi"
     if not config["hotkey_screen"].strip():
         problems.append('"hotkey_screen" is empty; using "right ctrl".')
@@ -489,13 +491,17 @@ LAST_LAYOUT = None  # [(image x, image y, width, height, screen left, screen top
 
 
 def capture_screen(method="gdi"):
-    """The entire screen (every monitor). method is "gdi" or "wgc"; WGC falls back to GDI if it fails."""
-    if method == "wgc":
-        try:
-            return capture_wgc()
-        except Exception:  # noqa: BLE001 - WGC can be missing or blocked; GDI always works
-            log_error("WGC capture failed, used GDI instead:\n" + traceback.format_exc())
-    return capture_gdi()
+    """The entire screen (every monitor). method names a backend in CAPTURE_METHODS; any backend that
+    fails falls back to GDI, which always works, so a flaky method never stops an answer."""
+    name = str(method).strip().lower()
+    func = CAPTURE_METHODS.get(name)
+    if func is None or name == "gdi":
+        return capture_gdi()
+    try:
+        return func()
+    except Exception:  # noqa: BLE001 - a backend can be missing or blocked; GDI always works
+        log_error(f"{name} capture failed, used GDI instead:\n" + traceback.format_exc())
+        return capture_gdi()
 
 
 def capture_gdi():
@@ -618,6 +624,150 @@ def capture_region():
     if right - left < 10 or bottom - top < 10:
         return capture_gdi()
     return ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
+
+
+def capture_imagegrab():
+    """Pillow's ImageGrab (a different GDI path from mss). Goes black on the same protected windows as
+    GDI, but it is a useful second opinion and needs nothing extra."""
+    import mss
+    from PIL import ImageGrab
+
+    global LAST_LAYOUT
+    image = ImageGrab.grab(all_screens=True).convert("RGB")
+    with mss.mss() as sct:
+        whole = sct.monitors[0]
+    LAST_LAYOUT = [(0, 0, image.width, image.height, whole["left"], whole["top"])]
+    return image
+
+
+def capture_printwindow():
+    """Asks the foreground window to paint itself with PrintWindow + PW_RENDERFULLCONTENT. Because the
+    window redraws instead of being copied off the screen, this often catches browser and GPU content
+    that plain GDI shows as black. It captures only that one window (usually the quiz), not the desktop."""
+    import ctypes
+    from ctypes import wintypes
+
+    from PIL import Image
+
+    global LAST_LAYOUT
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        raise RuntimeError("no foreground window to capture")
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    width, height = rect.right - rect.left, rect.bottom - rect.top
+    if width < 1 or height < 1:
+        raise RuntimeError("the foreground window has no size")
+
+    window_dc = user32.GetWindowDC(hwnd)
+    mem_dc = gdi32.CreateCompatibleDC(window_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(window_dc, width, height)
+    gdi32.SelectObject(mem_dc, bitmap)
+    try:
+        if not user32.PrintWindow(hwnd, mem_dc, 2):  # 2 = PW_RENDERFULLCONTENT (Windows 8.1+)
+            user32.PrintWindow(hwnd, mem_dc, 0)
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                        ("biClrImportant", wintypes.DWORD)]
+
+        header = BITMAPINFOHEADER()
+        header.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        header.biWidth, header.biHeight = width, -height  # negative height = top-down rows
+        header.biPlanes, header.biBitCount = 1, 32
+        buffer = ctypes.create_string_buffer(width * height * 4)
+        if not gdi32.GetDIBits(mem_dc, bitmap, 0, height, buffer, ctypes.byref(header), 0):
+            raise RuntimeError("GetDIBits failed reading the window image")
+        image = Image.frombuffer("RGB", (width, height), buffer, "raw", "BGRX", 0, 1)
+    finally:
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(hwnd, window_dc)
+    LAST_LAYOUT = [(0, 0, width, height, rect.left, rect.top)]
+    return image
+
+
+def capture_dxgi():
+    """DXGI Desktop Duplication through the dxcam/bettercam library: the GPU hands over the finished
+    desktop frame, so hardware-accelerated and HDR content that GDI shows as black comes through. Needs
+    the dxcam (or bettercam) package in the build; captures the primary monitor."""
+    import mss
+    from PIL import Image
+
+    try:
+        import bettercam as camera
+    except ImportError:
+        try:
+            import dxcam as camera
+        except ImportError:
+            raise RuntimeError("DXGI needs the dxcam (or bettercam) package, which isn't in this build yet")
+
+    global LAST_LAYOUT
+    cam = camera.create(output_color="RGB")
+    if cam is None:
+        raise RuntimeError("DXGI couldn't open the display (no duplication available)")
+    try:
+        # Desktop Duplication hands over the current desktop on the first grab after the duplicator is
+        # created, then nothing more until the screen changes. bettercam's create() already waits ~0.1 s;
+        # poll a little past that so even a perfectly static page still yields that first frame.
+        frame = None
+        for _ in range(20):
+            frame = cam.grab()
+            if frame is not None:
+                break
+            time.sleep(0.05)
+        if frame is None:
+            raise RuntimeError("DXGI opened the display but delivered no frame (screen fully static, "
+                               "or the window is excluded from capture)")
+        image = Image.fromarray(frame).convert("RGB")
+    finally:
+        try:
+            cam.release()
+        except Exception:  # noqa: BLE001
+            pass
+    with mss.mss() as sct:
+        primary = sct.monitors[1]
+    LAST_LAYOUT = [(0, 0, image.width, image.height, primary["left"], primary["top"])]
+    return image
+
+
+# All screenshot methods, in the order the capture test cycles through them. The label is what the tray
+# menu and the watch show. GDI is first because it always works; the rest are tried to beat black screens.
+CAPTURE_METHODS = {
+    "gdi": capture_gdi,
+    "imagegrab": capture_imagegrab,
+    "printwindow": capture_printwindow,
+    "wgc": capture_wgc,
+    "dxgi": capture_dxgi,
+}
+CAPTURE_LABELS = {
+    "gdi": "GDI / BitBlt (fast, default)",
+    "imagegrab": "Pillow ImageGrab",
+    "printwindow": "PrintWindow (foreground window)",
+    "wgc": "Windows Graphics Capture",
+    "dxgi": "DXGI Desktop Duplication",
+}
+
+
+def mean_brightness(image):
+    """Average 0–255 lightness. A value near 0 means the shot came out black."""
+    from PIL import ImageStat
+
+    return ImageStat.Stat(image.convert("L")).mean[0]
+
+
+def save_test_shot(image, method, brightness):
+    """Saves a capture-test frame under Documents\\StudyWatch\\capture-test and returns the path."""
+    folder = LOG_DIR / "capture-test"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{datetime.now():%H%M%S}-{method}-b{brightness:03.0f}.jpg"
+    image.convert("RGB").save(path, "JPEG", quality=80)
+    return path
 
 
 def to_jpeg_base64(image, max_side=1600):
@@ -1563,6 +1713,8 @@ class StudyWatch:
         threading.Thread(target=self._run, args=(region,), daemon=True).start()
 
     def _run(self, region):
+        if self.config.get("capture_test"):
+            return self._run_capture_test()
         if self.config.get("mode") == "coding":
             return self._run_code(region)
         try:
@@ -1675,6 +1827,45 @@ class StudyWatch:
                 self.watch.send("⚠️ Study Watch", str(error)[:500], priority=3)
             except requests.RequestException:
                 pass
+        finally:
+            self.busy.release()
+
+    CAPTURE_TEST_ORDER = ["gdi", "imagegrab", "printwindow", "wgc", "dxgi"]
+
+    def _run_capture_test(self):
+        """Capture-test mode: each press tries the NEXT screenshot method, saves the frame and reports
+        whether it came out black, instead of solving. Lets you find a method that beats a black screen."""
+        try:
+            order = self.CAPTURE_TEST_ORDER
+            index = getattr(self, "capture_test_index", 0) % len(order)
+            self.capture_test_index = (index + 1) % len(order)
+            method = order[index]
+            label = CAPTURE_LABELS.get(method, method)
+            print(f"Capture test {index + 1}/{len(order)}: {method}")
+            try:
+                started = time.time()
+                image = CAPTURE_METHODS[method]()
+                took = time.time() - started
+                brightness = mean_brightness(image)
+                verdict = "BLACK" if brightness < 10 else "very dark" if brightness < 25 else "looks OK"
+                path = save_test_shot(image, method, brightness)
+                body = (f"{index + 1}/{len(order)} · {label}\n"
+                        f"Brightness {brightness:.0f}/255 — {verdict}\n"
+                        f"{image.width}×{image.height}, {took:.1f}s\n"
+                        f"Saved {path.name}\n\nTap Right Ctrl for the next method.")
+                try:
+                    self.watch.send(f"🧪 {method}: {verdict}", body, priority=3)
+                except requests.RequestException:
+                    log_error(traceback.format_exc())
+                print(body)
+            except Exception as error:  # noqa: BLE001 - a broken method must not stop the test cycle
+                log_error(f"Capture test, {method} failed:\n" + traceback.format_exc())
+                try:
+                    self.watch.send(f"🧪 {method}: couldn't capture",
+                                    f"{index + 1}/{len(order)} · {label}\n{str(error)[:300]}\n\n"
+                                    "Tap Right Ctrl for the next method.", priority=3)
+                except requests.RequestException:
+                    pass
         finally:
             self.busy.release()
 
@@ -1993,9 +2184,33 @@ def main():
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         os.startfile(LOG_DIR)
 
-    def toggle_wgc(icon, item):
-        app.config["capture"] = "gdi" if app.config.get("capture") == "wgc" else "wgc"
+    def set_capture(method):
+        app.config["capture"] = method
         save_config(app.config)
+
+    def toggle_capture_test(icon, item):
+        on = not app.config.get("capture_test", False)
+        app.config["capture_test"] = on
+        save_config(app.config)
+        app.capture_test_index = 0
+        if on:
+            folder = LOG_DIR / "capture-test"
+            folder.mkdir(parents=True, exist_ok=True)
+            try:
+                os.startfile(folder)
+            except OSError:
+                pass
+
+            def announce():
+                try:
+                    app.watch.send("🧪 Capture test on",
+                                   "Each Right Ctrl press now tries the NEXT screenshot method and saves the "
+                                   "frame to the capture-test folder instead of solving. Watch which saved image "
+                                   "isn't black, set that as the Screenshot method, then untick this.", priority=3)
+                except requests.RequestException:
+                    pass
+
+            threading.Thread(target=announce, daemon=True).start()
 
     def toggle_lights(icon, item):
         app.config["lights"] = not app.config.get("lights")
@@ -2178,8 +2393,14 @@ def main():
             pystray.MenuItem("Counting (B = 2 blinks)", lambda icon, item: lights_mode("count")),
             pystray.MenuItem("Binary (B = 010)", lambda icon, item: lights_mode("binary")),
         ), enabled=lambda item: app.config.get("lights")),
-        pystray.MenuItem("Use Windows Graphics Capture", toggle_wgc,
-                         checked=lambda item: app.config.get("capture") == "wgc"),
+        pystray.MenuItem("Screenshot method", pystray.Menu(
+            *[pystray.MenuItem(CAPTURE_LABELS[name],
+                               (lambda m: lambda icon, item: set_capture(m))(name),
+                               checked=(lambda m: lambda item: app.config.get("capture", "gdi") == m)(name),
+                               radio=True)
+              for name in CAPTURE_METHODS])),
+        pystray.MenuItem("Test capture methods (cycle Right Ctrl)", toggle_capture_test,
+                         checked=lambda item: app.config.get("capture_test", False)),
         pystray.MenuItem("Start with Windows", toggle_startup, checked=lambda item: starts_with_windows()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", quit_app),
