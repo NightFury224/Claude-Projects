@@ -8,3 +8,4 @@ pyinstaller==6.10.0
 bleak==0.22.3
 winrt-Windows.Media.Ocr>=2,<3
 winrt-Windows.Graphics.Imaging>=2,<3
+bettercam==1.0.0
