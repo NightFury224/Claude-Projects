@@ -36,6 +36,8 @@ LOG_DIR = Path.home() / "Documents" / APP
 DEFAULTS = {
     "openrouter_key": "",
     "ai": "claude-code",         # "claude-code" (Claude Code on this laptop, your Claude account) or "openrouter"
+    "gemini_key": "",            # Google AI Studio key (aistudio.google.com) for the Gemini option
+    "gemini_model": "",          # leave empty to use the best Gemini that reads images; or e.g. "gemini-2.5-pro"
     "claude_token": "",          # long-lived Claude Code sign-in from "claude setup-token" (stays signed in ~1 year)
     "claude_model": "sonnet",    # Claude Code model: "sonnet" (smart), "haiku" (faster) or "opus" (best, slowest)
     "model": "auto",
@@ -710,6 +712,82 @@ def claude_code(messages, model="sonnet", token=""):
         shutil.rmtree(work, ignore_errors=True)
 
 
+GEMINI = "https://generativelanguage.googleapis.com/v1beta"
+_gemini_pick = {"model": "", "at": 0.0}
+
+
+def gemini_model(key, wanted=""):
+    """The Gemini model to use: the one set in Settings, else the best one this key can use that reads
+    images (asked of Google once every few hours, so new models are picked up on their own)."""
+    if wanted.strip():
+        return wanted.strip()
+    if _gemini_pick["model"] and time.time() - _gemini_pick["at"] < 6 * 3600:
+        return _gemini_pick["model"]
+    data = requests.get(f"{GEMINI}/models", params={"key": key}, timeout=20).json()
+    names = [m["name"].split("/")[-1] for m in data.get("models") or []
+             if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+    names = [n for n in names if not any(skip in n for skip in ("embedding", "tts", "image-generation"))]
+
+    def rank(name):
+        version = re.search(r"(\d+(?:\.\d+)?)", name)
+        return (float(version.group(1)) if version else 0,
+                2 if "pro" in name else 1 if "flash" in name else 0,
+                0 if "lite" in name else 1, -len(name))
+
+    if not names:
+        raise RuntimeError("That Google AI Studio key can't use any Gemini model.")
+    _gemini_pick.update(model=max(names, key=rank), at=time.time())
+    return _gemini_pick["model"]
+
+
+def gemini_chat(messages, key, wanted="", max_tokens=8000):
+    """Asks Gemini (Google AI Studio) the same question, with the screenshots attached."""
+    key = key.strip()
+    if not key:
+        raise RuntimeError("Add your Google AI Studio key in Settings as \"gemini_key\".")
+    system, contents = [], []
+    for message in messages:
+        content = message["content"]
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        parts = []
+        for item in content:
+            if item.get("type") == "text":
+                parts.append({"text": item["text"]})
+            elif item.get("type") == "image_url":
+                parts.append({"inline_data": {"mime_type": "image/jpeg",
+                                              "data": item["image_url"]["url"].split(",", 1)[1]}})
+        if message["role"] == "system":
+            system += parts
+        else:
+            contents.append({"role": "user", "parts": parts})
+    model = gemini_model(key, wanted)
+    body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0}}
+    if system:
+        body["systemInstruction"] = {"parts": system}
+    response = requests.post(f"{GEMINI}/models/{model}:generateContent", params={"key": key},
+                             json=body, timeout=180)
+    if response.status_code != 200:
+        try:
+            message = response.json()["error"]["message"]
+        except (ValueError, KeyError, TypeError):
+            message = f"HTTP {response.status_code}"
+        if response.status_code in (400, 403) and "api key" in message.lower():
+            message = "Google rejected the key. Check \"gemini_key\" in Settings."
+        elif response.status_code == 429:
+            message = "Gemini's free limit reached. Try again in a minute, or tomorrow."
+        elif response.status_code == 404:
+            _gemini_pick.update(model="", at=0)  # that model is gone: pick again next time
+        raise RuntimeError(f"Gemini: {message}")
+    data = response.json()
+    for candidate in data.get("candidates") or []:
+        text = "".join(part.get("text", "") for part in (candidate.get("content") or {}).get("parts") or [])
+        if text.strip():
+            return text
+    blocked = ((data.get("promptFeedback") or {}).get("blockReason") or "")
+    raise RuntimeError(f"Gemini gave no answer{' (' + blocked + ')' if blocked else ''}.")
+
+
 class Claude:
     """OpenRouter client. By default it uses the best *free* models that can read images, with automatic
     fallback to the next one when a model is busy or rate-limited."""
@@ -775,6 +853,9 @@ class Claude:
     def chat(self, messages, max_tokens=1500, skip=0):
         """Asks the chosen AI. With Claude Code, a retry (skip=1) uses Sonnet, and the last retry or a missing /
         limited Claude Code falls back to the free OpenRouter models when there is a key."""
+        if self.config.get("ai", "claude-code") == "gemini":
+            return gemini_chat(messages, self.config.get("gemini_key", ""),
+                               self.config.get("gemini_model", ""), max_tokens)
         if self.config.get("ai", "claude-code") == "claude-code":
             has_key = bool(self.config.get("openrouter_key", "").strip())
             if skip < 2 or not has_key:
@@ -2008,11 +2089,14 @@ ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838", "no
 MODIFIER_KEYS = {"right ctrl", "left ctrl", "right shift", "left shift", "right alt", "left alt",
                  "alt gr", "right windows", "left windows"}
 AI_CYCLE = [("claude-code", "opus", "D"), ("claude-code", "sonnet", "C"),
-            ("claude-code", "haiku", "B"), ("openrouter", "", "A")]  # D = 4 flashes … A = 1 flash
+            ("claude-code", "haiku", "B"), ("openrouter", "", "A"),
+            ("gemini", "", "E")]  # flashes: Opus 4, Sonnet 3, Haiku 2, OpenRouter 1, Gemini 5
 
 
 def ai_position(config):
-    """Where the current AI sits in the cycle Opus → Sonnet → Haiku → OpenRouter."""
+    """Where the current AI sits in the cycle Opus → Sonnet → Haiku → OpenRouter → Gemini."""
+    if config.get("ai", "claude-code") == "gemini":
+        return 4
     if config.get("ai", "claude-code") != "claude-code":
         return 3
     model = config.get("claude_model", "sonnet")
@@ -2294,7 +2378,10 @@ def main():
                              checked=lambda item: app.config.get("ai") == "claude-code"
                              and app.config.get("claude_model") == "opus", radio=True),
             pystray.MenuItem("OpenRouter (free models)", lambda icon, item: set_ai("openrouter", None),
-                             checked=lambda item: app.config.get("ai") != "claude-code", radio=True),
+                             checked=lambda item: app.config.get("ai") not in ("claude-code", "gemini"),
+                             radio=True),
+            pystray.MenuItem("Gemini (Google AI Studio key)", lambda icon, item: set_ai("gemini", None),
+                             checked=lambda item: app.config.get("ai") == "gemini", radio=True),
         )),
         pystray.MenuItem("Mode", pystray.Menu(
             pystray.MenuItem("Quiz (options and numbers)", lambda icon, item: set_mode("quiz"),

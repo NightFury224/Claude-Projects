@@ -160,7 +160,7 @@ assert s.find_option(_circles, "C", (210, 400), 300) == (230, 430)
 assert s.find_option(_circles, "A", (210, 400), 300) == (230, 310)
 assert s.find_option(_circles, "Z", (210, 400), 300) is None
 # The AI cycle order and the flashes that go with it.
-assert [flashes for _, _, flashes in s.AI_CYCLE] == ["D", "C", "B", "A"]
+assert [flashes for _, _, flashes in s.AI_CYCLE] == ["D", "C", "B", "A", "E"]
 assert s.ai_position({"ai": "claude-code", "claude_model": "opus"}) == 0
 assert s.ai_position({"ai": "openrouter"}) == 3
 s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
@@ -201,3 +201,14 @@ print("coding mode ok")
 
 assert s.load_config()["code_size"] in s.CODE_SIZES.values()
 print("code sizes ok")
+
+# Gemini is the 5th step of the cycle (5 Caps Lock flashes = "E").
+assert s.AI_CYCLE[4][0] == "gemini" and s.AI_CYCLE[4][2] == "E"
+assert s.ai_position({"ai": "gemini"}) == 4
+assert s.ai_position({"ai": "openrouter"}) == 3
+try:
+    s.gemini_chat([{"role": "user", "content": "hi"}], "")
+    raise SystemExit("gemini_chat should refuse an empty key")
+except RuntimeError as error:
+    assert "gemini_key" in str(error)
+print("gemini ok")

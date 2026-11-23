@@ -185,3 +185,15 @@ The pointer lands on the middle of the option's letter, or on its tick box / fir
 letters. Option text is matched loosely (O/0, l/1, spacing, long options by their first words), and a misread
 letter is worked out from the other options of the same question. If the option still can't be found, the AI's
 spot is used, moved onto the nearest line of text, and the miss is noted in `errors.log`.
+
+## Gemini (Google AI Studio)
+
+A third AI option, beside Claude Code and OpenRouter. A Gemini **Plus/Advanced subscription does not work
+here** — the app needs an API key from [Google AI Studio](https://aistudio.google.com) (free tier available).
+
+1. Create the key in AI Studio and copy it.
+2. Tray → Settings, paste it as `"gemini_key": "…"`, save, then tray → Reload settings.
+3. Tray → **AI → Gemini**, or tap Right Alt until Caps Lock flashes 5 times.
+
+The newest Gemini that reads images is chosen automatically; set `"gemini_model"` (e.g. `"gemini-2.5-pro"`)
+to pin one. Right Alt cycles: Opus (4 flashes) → Sonnet (3) → Haiku (2) → OpenRouter (1) → Gemini (5).
