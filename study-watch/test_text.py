@@ -62,9 +62,11 @@ import tempfile
 from pathlib import Path
 s.CONFIG_DIR = Path(tempfile.mkdtemp())
 s.RULES_FILE = s.CONFIG_DIR / "rules.txt"
-assert s.system_prompt().startswith(s.DEFAULT_RULES.strip()) and s.system_prompt().endswith(s.REPLY_FORMAT)
+assert s.system_prompt().startswith(s.WHO_IS_ASKING) and s.system_prompt().endswith(s.REPLY_FORMAT)
+assert s.DEFAULT_RULES.strip() in s.system_prompt()
 s.RULES_FILE.write_text("Answer in French.", encoding="utf-8")
-assert s.system_prompt() == "Answer in French.\n\n" + s.SPLIT_QUESTIONS + "\n\n" + s.REPLY_FORMAT
+assert s.system_prompt() == (s.WHO_IS_ASKING + "\n\nAnswer in French.\n\n"
+                             + s.SPLIT_QUESTIONS + "\n\n" + s.REPLY_FORMAT)
 s.RULES_FILE.write_text("  ", encoding="utf-8")  # emptied file falls back to the defaults
 assert s.load_rules() == s.DEFAULT_RULES.strip()
 # A broken config.json still loads: key and topic are rescued, problems are listed, the file is kept.
@@ -242,3 +244,9 @@ _claude.ask_one = lambda name, *a: (_tried.append(name), (_ for _ in ()).throw(R
     if name != "claude-code" else "answer"
 assert _claude.chat([]) == "answer" and _tried == ["gemini"]
 print("fallback ok")
+
+# The real context is always sent, even when rules.txt was created by an older version.
+_prompt = s.system_prompt()
+assert _prompt.startswith("You are helping a teacher during a live class.")
+assert "projector" in _prompt and "View Answer" in _prompt
+print("context ok")
