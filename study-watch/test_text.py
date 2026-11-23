@@ -264,3 +264,48 @@ s.RULES_FILE.unlink()
 assert s.parse_answer('{"work": "long private working", "answer": "B) 42", "options": "B"}')["answer"] == "B) 42"
 assert s.parse_code('{"work": "trace", "title": "T", "lines": ["x = 1"]}')[1] == ["x = 1"]
 print("no reasoning extraction ok")
+
+# ---- coding mode: typing the program out, one tap at a time ----------------------------------------
+def _type_out(program, auto_indent):
+    """Taps the type key until the whole program is typed, into a toy editor. [auto_indent] copies the
+    previous line's indent after Enter, like IDLE and VS Code; Notepad does not."""
+    text, select_to_start = [""], False
+
+    def put(chars):
+        nonlocal select_to_start
+        if select_to_start:
+            text[-1] = ""          # typing over a shift+Home selection wipes the line's indent
+            select_to_start = False
+        text[-1] += chars
+
+    index, typed, taps = 0, None, 0
+    while taps < 10000:
+        keys, index, typed = s.next_keys(program, index, typed)
+        if not keys and index >= len(program):
+            break
+        for kind, value in keys:
+            if kind == "text":
+                put(value)
+            elif value == "enter":
+                indent = len(text[-1]) - len(text[-1].lstrip(" ")) if auto_indent else 0
+                text.append(" " * indent)
+                select_to_start = False
+            elif value == "backspace":
+                text[-1] = text[-1][:-1]
+            elif value == "shift+home":
+                select_to_start = True
+        taps += 1
+    return "\n".join(text), taps
+
+
+_program = ["n = int(input())", "total = 0", "for i in range(n):", "    if i % 2 == 0:",
+            "        total = total + i", "print(total)"]
+for _auto in (True, False):           # an auto-indenting editor and a plain one must both come out right
+    _out, _taps = _type_out(_program, _auto)
+    assert _out == "\n".join(_program), f"auto_indent={_auto}:\n{_out}"
+    assert _taps == sum(len(line) for line in _program) - sum(
+        len(line) - len(line.lstrip(" ")) for line in _program) + len(_program) - 1, _taps
+# A single line still types, and the indent of the very first line is kept.
+assert _type_out(["print(1)"], True)[0] == "print(1)"
+assert _type_out(["    x = 1", "    y = 2"], True)[0] == "    x = 1\n    y = 2"
+print("typing ok")
