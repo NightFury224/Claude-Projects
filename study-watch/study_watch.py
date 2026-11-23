@@ -976,6 +976,10 @@ def glide_pointer(target, seconds=0.5):
         _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
     user32 = ctypes.windll.user32
+    try:  # this thread works in real screen pixels, the same as the screenshot
+        user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))  # per-monitor aware v2
+    except Exception:  # noqa: BLE001 - older Windows
+        pass
     start = POINT()
     user32.GetCursorPos(ctypes.byref(start))
     steps = 25
@@ -984,6 +988,37 @@ def glide_pointer(target, seconds=0.5):
         t = t * t * (3 - 2 * t)  # ease in and out
         user32.SetCursorPos(int(start.x + (target[0] - start.x) * t), int(start.y + (target[1] - start.y) * t))
         time.sleep(seconds / steps)
+    land_exactly(target)
+
+
+def land_exactly(target):
+    """Makes sure the pointer really ends on [target] (real screen pixels). If Windows display scaling made
+    it stop short, the error is measured and corrected, a few times if needed."""
+    import ctypes
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    user32 = ctypes.windll.user32
+    where, real = POINT(), POINT()
+    aim = [float(target[0]), float(target[1])]
+    for _ in range(4):
+        user32.SetCursorPos(int(round(aim[0])), int(round(aim[1])))
+        time.sleep(0.02)
+        user32.GetCursorPos(ctypes.byref(where))
+        try:
+            if not user32.GetPhysicalCursorPos(ctypes.byref(real)):
+                return
+        except Exception:  # noqa: BLE001
+            return
+        off_x, off_y = target[0] - real.x, target[1] - real.y
+        if abs(off_x) <= 2 and abs(off_y) <= 2:
+            return
+        # scaling: move the aim by the error, measured in the same units SetCursorPos uses
+        scale_x = where.x / real.x if real.x else 1.0
+        scale_y = where.y / real.y if real.y else 1.0
+        aim = [where.x + off_x * scale_x, where.y + off_y * scale_y]
+    log_error(f"Pointer: aimed at {target}, ended at ({real.x}, {real.y})")
 
 
 POINT_HOLD_S = 5.0  # how long the pointer stays on each answer before moving to the next question's
@@ -1250,7 +1285,7 @@ def point_at_answer(image, result, label_style=None):
 # ---------------------------------------------------------------- Caps Lock light (counting)
 
 CAPS_BLINK_S = 0.4          # on and off time of each blink
-CAPS_AFTER_THINKING_S = 2.0  # dark pause between the last thinking flash and the answer count
+CAPS_READY_S = 3.0  # Caps Lock stays lit this long when the answer arrives, then the count starts
 CAPS_BETWEEN_S = 3.0        # pause between answers when one screen has several questions
 caps_lock = threading.Lock()
 
@@ -1273,6 +1308,38 @@ def caps_thinking(stop):
             toggle()
             time.sleep(0.3)
             toggle()
+
+
+def caps_answer_ready(letters):
+    """Answer arrived: Caps Lock lit steadily for 3 seconds (clearly not a thinking flash), a short dark
+    pause, then the count (A = 1 blink …). Caps Lock is put back the way it was at the very start."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    user32 = ctypes.windll.user32
+
+    def is_on():
+        return bool(user32.GetKeyState(0x14) & 1)
+
+    def set_caps(on):
+        if is_on() != on:
+            user32.keybd_event(0x14, 0x3A, 0, 0)
+            user32.keybd_event(0x14, 0x3A, 0x0002, 0)
+            time.sleep(0.05)
+
+    if not any(len(l) == 1 and "A" <= l <= "Z" for l in letters):
+        return
+    with caps_lock:
+        was_on = is_on()
+        set_caps(True)
+        time.sleep(CAPS_READY_S)
+        set_caps(False)
+        time.sleep(1.0)
+    try:
+        caps_count(letters)  # starts from dark, so it counts straight away
+    finally:
+        with caps_lock:
+            set_caps(was_on)
 
 
 def caps_count(letters):
@@ -1622,8 +1689,7 @@ class StudyWatch:
                 self.watch.lights("none")
             if self.config.get("caps_lights"):
                 def count(letters=lights_letters(result)):
-                    time.sleep(CAPS_AFTER_THINKING_S)  # a clear dark gap after the thinking flashes
-                    caps_count(letters)
+                    caps_answer_ready(letters)
                 threading.Thread(target=count, daemon=True).start()
             if self.config.get("point_answer") and not region:
                 threading.Thread(target=point_at_answer, args=(image, result, self.config.get("label_style", "light")),
