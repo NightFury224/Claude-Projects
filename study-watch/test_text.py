@@ -212,3 +212,18 @@ try:
 except RuntimeError as error:
     assert "gemini_key" in str(error)
 print("gemini ok")
+
+# The Gemini model picker: only real gemini-* models that can read an image, newest and stablest first.
+import types as _t
+_models = {"models": [{"name": "models/antigravity-preview-09-2026", "supportedGenerationMethods": ["generateContent"]},
+                      {"name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent"]},
+                      {"name": "models/gemini-4-hydrogen", "supportedGenerationMethods": ["generateContent"]},
+                      {"name": "models/gemini-embedding-001", "supportedGenerationMethods": ["generateContent"]},
+                      {"name": "models/gemini-4-flash-preview", "supportedGenerationMethods": ["generateContent"]}]}
+s.requests.get = lambda *a, **k: _t.SimpleNamespace(json=lambda: _models)
+s._gemini_pick.update(names=[], at=0)
+_names = s.gemini_candidates("key")
+assert _names[0] == "gemini-4-hydrogen", _names        # newest stable, not the "09-2026" preview
+assert "antigravity-preview-09-2026" not in _names     # not a gemini model at all
+assert "gemini-embedding-001" not in _names            # can't read images
+print("gemini picker ok")

@@ -713,31 +713,35 @@ def claude_code(messages, model="sonnet", token=""):
 
 
 GEMINI = "https://generativelanguage.googleapis.com/v1beta"
-_gemini_pick = {"model": "", "at": 0.0}
+_gemini_pick = {"names": [], "at": 0.0, "bad": set()}
 
 
-def gemini_model(key, wanted=""):
-    """The Gemini model to use: the one set in Settings, else the best one this key can use that reads
-    images (asked of Google once every few hours, so new models are picked up on their own)."""
-    if wanted.strip():
-        return wanted.strip()
-    if _gemini_pick["model"] and time.time() - _gemini_pick["at"] < 6 * 3600:
-        return _gemini_pick["model"]
+NOT_VISION = ("embedding", "tts", "audio", "live", "veo", "imagen", "image-generation", "computer-use")
+
+
+def gemini_candidates(key):
+    """The Gemini models this key can use that should be able to read a screenshot, best first.
+    Only real "gemini-…" models count: Google also lists other things (preview tools, embedding and
+    speech models) that cannot take an image."""
+    if _gemini_pick["names"] and time.time() - _gemini_pick["at"] < 6 * 3600:
+        return _gemini_pick["names"]
     data = requests.get(f"{GEMINI}/models", params={"key": key}, timeout=20).json()
     names = [m["name"].split("/")[-1] for m in data.get("models") or []
              if "generateContent" in (m.get("supportedGenerationMethods") or [])]
-    names = [n for n in names if not any(skip in n for skip in ("embedding", "tts", "image-generation"))]
+    names = [n for n in names if n.startswith("gemini-") and not any(skip in n for skip in NOT_VISION)]
 
     def rank(name):
-        version = re.search(r"(\d+(?:\.\d+)?)", name)
+        version = re.search(r"^gemini-(\d+(?:\.\d+)?)", name)  # the version right after "gemini-"
         return (float(version.group(1)) if version else 0,
+                0 if "preview" in name or "exp" in name else 1,  # a stable model before a preview one
                 2 if "pro" in name else 1 if "flash" in name else 0,
-                0 if "lite" in name else 1, -len(name))
+                0 if "lite" in name else 1)
 
     if not names:
-        raise RuntimeError("That Google AI Studio key can't use any Gemini model.")
-    _gemini_pick.update(model=max(names, key=rank), at=time.time())
-    return _gemini_pick["model"]
+        raise RuntimeError("That Google AI Studio key can't use any Gemini model that reads images.")
+    names.sort(key=rank, reverse=True)
+    _gemini_pick.update(names=names, at=time.time())
+    return names
 
 
 def gemini_chat(messages, key, wanted="", max_tokens=8000):
@@ -761,25 +765,36 @@ def gemini_chat(messages, key, wanted="", max_tokens=8000):
             system += parts
         else:
             contents.append({"role": "user", "parts": parts})
-    model = gemini_model(key, wanted)
     body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0}}
     if system:
         body["systemInstruction"] = {"parts": system}
-    response = requests.post(f"{GEMINI}/models/{model}:generateContent", params={"key": key},
-                             json=body, timeout=180)
-    if response.status_code != 200:
+    if wanted.strip():
+        models = [wanted.strip()]
+    else:
+        models = [name for name in gemini_candidates(key) if name not in _gemini_pick["bad"]][:4]
+    data, last = None, "no Gemini model worked"
+    for model in models:
+        response = requests.post(f"{GEMINI}/models/{model}:generateContent", params={"key": key},
+                                 json=body, timeout=180)
+        if response.status_code == 200:
+            data = response.json()
+            break
         try:
             message = response.json()["error"]["message"]
         except (ValueError, KeyError, TypeError):
             message = f"HTTP {response.status_code}"
-        if response.status_code in (400, 403) and "api key" in message.lower():
-            message = "Google rejected the key. Check \"gemini_key\" in Settings."
-        elif response.status_code == 429:
-            message = "Gemini's free limit reached. Try again in a minute, or tomorrow."
-        elif response.status_code == 404:
-            _gemini_pick.update(model="", at=0)  # that model is gone: pick again next time
+        low = message.lower()
+        if response.status_code in (400, 403) and "api key" in low:
+            raise RuntimeError("Gemini: Google rejected the key. Check \"gemini_key\" in Settings.")
+        if response.status_code == 429:
+            raise RuntimeError("Gemini: free limit reached. Try again in a minute, or tomorrow.")
+        if response.status_code == 404 or "modality" in low or "not supported" in low:
+            _gemini_pick["bad"].add(model)  # can't read images, or gone: never try it again
+            last = f"{model}: {message}"
+            continue
         raise RuntimeError(f"Gemini: {message}")
-    data = response.json()
+    if data is None:
+        raise RuntimeError(f"Gemini: {last}")
     for candidate in data.get("candidates") or []:
         text = "".join(part.get("text", "") for part in (candidate.get("content") or {}).get("parts") or [])
         if text.strip():
