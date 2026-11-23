@@ -43,6 +43,8 @@ DEFAULTS = {
     "model": "auto",
     "hotkey_screen": "right ctrl",
     "hotkey_region": "",
+    "hotkey_ai": "right alt",    # taps through Opus → Sonnet → Haiku → OpenRouter → Gemini (quiz mode)
+    "gemini_thinking": 0,        # Gemini thinking budget: 0 = off (fastest), -1 = let Gemini decide
     "capture": "gdi",
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": "",
@@ -744,7 +746,7 @@ def gemini_candidates(key):
     return names
 
 
-def gemini_chat(messages, key, wanted="", max_tokens=8000):
+def gemini_chat(messages, key, wanted="", max_tokens=8000, thinking=None):
     """Asks Gemini (Google AI Studio) the same question, with the screenshots attached."""
     key = key.strip()
     if not key:
@@ -765,7 +767,11 @@ def gemini_chat(messages, key, wanted="", max_tokens=8000):
             system += parts
         else:
             contents.append({"role": "user", "parts": parts})
-    body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0}}
+    config = {"maxOutputTokens": max_tokens, "temperature": 0}
+    if thinking is not None and int(thinking) >= 0:
+        # Thinking is what makes Gemini slow; 0 turns it off for a quick answer.
+        config["thinkingConfig"] = {"thinkingBudget": int(thinking)}
+    body = {"contents": contents, "generationConfig": config}
     if system:
         body["systemInstruction"] = {"parts": system}
     if wanted.strip():
@@ -792,6 +798,13 @@ def gemini_chat(messages, key, wanted="", max_tokens=8000):
             _gemini_pick["bad"].add(model)  # can't read images, or gone: never try it again
             last = f"{model}: {message}"
             continue
+        if response.status_code == 400 and "thinking" in low and "thinkingConfig" in config:
+            config.pop("thinkingConfig")  # this model has no thinking setting: ask again without it
+            response = requests.post(f"{GEMINI}/models/{model}:generateContent", params={"key": key},
+                                     json=body, timeout=180)
+            if response.status_code == 200:
+                data = response.json()
+                break
         raise RuntimeError(f"Gemini: {message}")
     if data is None:
         raise RuntimeError(f"Gemini: {last}")
@@ -870,7 +883,8 @@ class Claude:
         limited Claude Code falls back to the free OpenRouter models when there is a key."""
         if self.config.get("ai", "claude-code") == "gemini":
             return gemini_chat(messages, self.config.get("gemini_key", ""),
-                               self.config.get("gemini_model", ""), max_tokens)
+                               self.config.get("gemini_model", ""), max_tokens,
+                               self.config.get("gemini_thinking", 0))
         if self.config.get("ai", "claude-code") == "claude-code":
             has_key = bool(self.config.get("openrouter_key", "").strip())
             if skip < 2 or not has_key:
@@ -2177,10 +2191,14 @@ def main():
         if "+" not in combo and combo in MODIFIER_KEYS:
             # A lone modifier (e.g. right ctrl) fires when tapped on its own, and isn't swallowed,
             # so shortcuts like right ctrl+c keep working.
+            # On an India/English layout Right Alt is AltGr: Windows calls it "alt gr" and sends a phantom
+            # Left Ctrl (scan code 541) with it, which must not count as "another key was pressed".
+            names = {combo, "alt gr"} if combo == "right alt" else {combo}
+            companion = (lambda event: combo == "right alt" and event.scan_code == 541)
             state = {"down": False, "other": False, "since": 0.0}
 
             def on_key(event):
-                if event.name == combo:
+                if event.name in names:
                     if event.event_type == "down" and not state["down"]:
                         state.update(down=True, other=False, since=time.time())
                     elif event.event_type == "up" and state["down"]:
@@ -2191,7 +2209,7 @@ def main():
                                 threading.Thread(target=long_action, daemon=True).start()
                             else:
                                 action()
-                elif event.event_type == "down":
+                elif event.event_type == "down" and not companion(event):
                     state["other"] = True
 
             hotkeys.append(("hook", keyboard.hook(on_key)))
@@ -2212,7 +2230,11 @@ def main():
             log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
             add_hotkey(DEFAULTS["hotkey_screen"], lambda: app.run(region=False))
         if app.config.get("mode") != "coding":  # in coding mode Right Alt types the code out instead
-            add_hotkey("right alt", lambda: threading.Thread(target=cycle_ai, daemon=True).start())
+            try:
+                add_hotkey(app.config.get("hotkey_ai") or "right alt",
+                           lambda: threading.Thread(target=cycle_ai, daemon=True).start())
+            except ValueError:
+                log_error(f"Invalid AI hotkey {app.config.get('hotkey_ai')!r}, ignored")
         if app.config.get("mode") == "coding":  # only in coding mode, so these keys work normally otherwise
             add_hotkey("page down", app.code_line.next)      # these two keys are taken over in coding mode
             add_hotkey("page up", app.code_line.previous)

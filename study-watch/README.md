@@ -197,3 +197,12 @@ here** — the app needs an API key from [Google AI Studio](https://aistudio.goo
 
 The newest Gemini that reads images is chosen automatically; set `"gemini_model"` (e.g. `"gemini-2.5-pro"`)
 to pin one. Right Alt cycles: Opus (4 flashes) → Sonnet (3) → Haiku (2) → OpenRouter (1) → Gemini (5).
+
+### The AI key and Gemini speed
+
+`"hotkey_ai"` (default `"right alt"`) is the key that cycles the AI in quiz mode; set it to `"f9"` or
+another key if Right Alt is awkward on your layout. Right Alt is treated as AltGr-aware, so the phantom
+Left Ctrl that Windows sends with it on an India/English layout does not cancel the tap.
+
+`"gemini_thinking"` is `0` by default, which turns Gemini's thinking off for the quickest answer. Set it to
+`-1` to let Gemini think as much as it likes (slower, a bit better on hard figure questions).
