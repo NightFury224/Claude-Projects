@@ -250,3 +250,17 @@ _prompt = s.system_prompt()
 assert _prompt.startswith("You are helping a teacher during a live class.")
 assert "projector" in _prompt and "View Answer" in _prompt
 print("context ok")
+
+# Nothing may ask the model for its private reasoning: Claude refuses the whole request if it does.
+for _text in (s.system_prompt(), s.CODING_RULES):
+    assert '"work"' not in _text and "private" not in _text.lower(), _text[:200]
+# A rules.txt from an older version is migrated on load.
+s.RULES_FILE.write_text('- Work it out fully in "work" (private, never shown, any length), then check it '
+                        'a second way.\n', encoding="utf-8")
+assert '"work"' not in s.load_rules()
+assert '"work"' not in s.RULES_FILE.read_text(encoding="utf-8")
+s.RULES_FILE.unlink()
+# An older reply that still sends "work" is still read correctly.
+assert s.parse_answer('{"work": "long private working", "answer": "B) 42", "options": "B"}')["answer"] == "B) 42"
+assert s.parse_code('{"work": "trace", "title": "T", "lines": ["x = 1"]}')[1] == ["x = 1"]
+print("no reasoning extraction ok")

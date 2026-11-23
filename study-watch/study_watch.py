@@ -90,7 +90,7 @@ Accuracy comes first:
 - Solve it yourself first. The page may show an option a student has clicked, or the site's own published
   answer; work it out independently instead of copying either. If you disagree with an answer shown on the
   page, give yours — the teacher will discuss the difference with the class.
-- Work it out fully in "work" (private, never shown, any length), then check it a second way.
+- Take the time to work it out properly and check it a second way before answering.
   Read any values you need from graphs, tables or images carefully before using them.
 
 What is shown must be as small as possible:
@@ -154,10 +154,10 @@ Use BASIC Python 3 only, the most obvious beginner approach, as short and simple
 - If starter code is given, keep its exact names, parameters and lines, and include them in order.
 - If the problem says how input arrives, read it exactly that way; print exactly what it asks for.
 - 4 spaces per indent. No comments and no blank lines.
-- Check it privately by tracing the example by hand before answering.
+- Trace the example by hand to check it before answering.
 
 Reply with JSON only:
-{"work": "<private check: trace the example>", "title": "<the problem in under 40 characters>",
+{"title": "<the problem in under 40 characters>",
  "lines": ["<line 1>", "<line 2>", "..."]}
 If there is no coding problem on screen, give "lines": []."""
 
@@ -185,8 +185,8 @@ def parse_code(raw):
     return title.strip(), [line for line in lines if line.strip()]
 
 
-REPLY_FORMAT = """Reply with JSON only, "work" first:
-{"work": "<private working and check>", "question": "<topic, under 40 characters>",
+REPLY_FORMAT = """Reply with JSON only:
+{"question": "<topic, under 40 characters>",
  "answer": "<shortest answer>", "steps": ["<optional note>"], "context": "<shared material, or empty>",
  "new_set": false, "options": "<letters>", "numbers": "<numbers>", "point": "<x,y>"}
 "options": the letter of the ONE CORRECT option for each question answered, in the same order as "answer",
@@ -210,7 +210,15 @@ def load_rules():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not RULES_FILE.exists() or not RULES_FILE.read_text(encoding="utf-8").strip():
         RULES_FILE.write_text(DEFAULT_RULES, encoding="utf-8")
-    return RULES_FILE.read_text(encoding="utf-8").strip()
+    text = RULES_FILE.read_text(encoding="utf-8")
+    old = '- Work it out fully in "work" (private, never shown, any length), then check it a second way.'
+    if old in text:
+        # A rules.txt from an older version: asking for a private "work" field makes Claude's models refuse
+        # the whole request (a safeguard against being asked for their private reasoning). Drop that line.
+        text = text.replace(old, "- Take the time to work it out properly and check it a second way "
+                                 "before answering.")
+        RULES_FILE.write_text(text, encoding="utf-8")
+    return text.strip()
 
 
 def system_prompt():
