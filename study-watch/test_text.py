@@ -126,10 +126,20 @@ assert s.point_value("") is None and s.point_value("x") is None and s.point_valu
 _lines = [("C) 0.005", 100, 400, 80, 20, _R(x=100, y=400, width=20, height=20)),
           ("C) 1/3", 100, 900, 80, 20, _R(x=100, y=900, width=20, height=20)),
           ("B) 0.02", 100, 350, 80, 20, _R(x=100, y=350, width=20, height=20))]
-assert s.find_option(_lines, "C", (300, 420), 300) == (110, 410)   # nearest C), not the B) above it
+assert s.find_option(_lines, "C", (300, 420), 300) == (110, 410)   # this question's C), not the other one's
 assert s.find_option(_lines, "C", (300, 880), 300) == (110, 910)
 assert s.find_option(_lines, "D", (300, 420), 300) == (110, 460)  # worked out from B) and C)
 assert s.find_option(_lines[:1], "D", (300, 420), 300) is None
+# Two questions on one screen: a spot a little too high must still give the SECOND question's option.
+_two = [("A) 10", 100, 300, 80, 20, _R(x=100, y=300, width=20, height=20)),
+        ("B) 20", 100, 350, 80, 20, _R(x=100, y=350, width=20, height=20)),
+        ("C) 30", 100, 400, 80, 20, _R(x=100, y=400, width=20, height=20)),
+        ("A) 40", 100, 700, 80, 20, _R(x=100, y=700, width=20, height=20)),
+        ("B) 50", 100, 750, 80, 20, _R(x=100, y=750, width=20, height=20)),
+        ("C) 60", 100, 800, 80, 20, _R(x=100, y=800, width=20, height=20))]
+assert s.find_option(_two, "B", (110, 690), 300) == (110, 760)   # just above the 2nd block → its B)
+assert s.find_option(_two, "B", (110, 310), 300) == (110, 360)   # inside the 1st block → its B)
+assert len(s.option_groups([(i, (100, y)) for i, y in enumerate([300, 350, 400])])) == 1
 s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
 assert s.image_to_screen(110, 410) == (110, 410) and s.image_to_screen(2000, 10) == (-1840, 10)
 print("pointer ok")

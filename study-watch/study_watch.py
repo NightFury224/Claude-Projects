@@ -908,46 +908,76 @@ def text_matches(line_text, value):
     return False
 
 
+def option_groups(labels):
+    """Splits all the letter labels on screen into one group per question: a run of letters going A, B, C …
+    down the page, in roughly the same column. Two questions on one screen each get their own group, so
+    question 2's "C)" is never confused with question 1's."""
+    groups = []
+    for index, spot in sorted(labels, key=lambda item: item[1][1]):  # top to bottom
+        current = groups[-1] if groups else None
+        if current:
+            last_index, (last_x, last_y) = current[-1]
+            gap = spot[1] - last_y
+            same_question = index > last_index and 0 < gap <= 260 and abs(spot[0] - last_x) <= 120
+            if not same_question:
+                current = None
+        if current is None:
+            groups.append([])
+        groups[-1].append((index, spot))
+    return groups
+
+
+def group_distance(group, near):
+    """How far [near] is from a group of option letters: zero while it is inside their block."""
+    xs = [spot[0] for _, spot in group]
+    ys = [spot[1] for _, spot in group]
+    dx = max(min(xs) - near[0], 0, near[0] - max(xs))
+    dy = max(min(ys) - near[1], 0, near[1] - max(ys))
+    return (dx ** 2 + dy ** 2) ** 0.5
+
+
+def spot_in_group(group, target):
+    """The target letter's spot in this question's group: the letter itself, or worked out from the others
+    (evenly stacked) when text recognition misread it."""
+    want = ord(target) - ord("A")
+    for index, spot in group:
+        if index == want:
+            return spot
+    if len(group) < 2:
+        return None
+    (i0, (x0, y0)), (i1, (x1, y1)) = group[0], group[-1]
+    if i1 == i0 or abs(want - i0) > 6:
+        return None
+    step_x, step_y = (x1 - x0) / (i1 - i0), (y1 - y0) / (i1 - i0)
+    return (x0 + step_x * (want - i0), y0 + step_y * (want - i0))
+
+
 def find_option(lines, letter, near, max_distance, value=""):
-    """The exact on-screen spot of the correct option closest to [near], or None:
-    - its letter label ("C)", "(C)", "C."): the middle of the letter itself;
-    - else, for options without labels, the line whose text is the option's [value] ("70"), matched loosely:
-      the start of that line (its tick box or first word);
-    - else the letters of the same question's other options (stacked A, B, C …) show where it must be."""
+    """The exact on-screen spot of the correct option, or None. The AI's rough spot [near] only chooses
+    which question's options to use; the letter is then taken from that question's own group, so a spot
+    that is a little too high lands on the right option instead of the question above's.
+    Options without letters are found by their text [value] ("70") instead."""
     target = letter.upper()
     label = re.compile(r"^\W*\(?([A-Za-z])\s*[).:]")
-    best, others = None, []
-
-    def consider(spot):
-        nonlocal best
-        distance = ((spot[0] - near[0]) ** 2 + (spot[1] - near[1]) ** 2) ** 0.5
-        if distance <= max_distance and (best is None or distance < best[0]):
-            best = (distance, spot)
+    labels, by_text = [], None
 
     for text, x, y, w, h, first in lines:
         found = label.match(text.strip())
         start = (first.x + first.width / 2, first.y + first.height / 2)  # the letter label or tick box
-        if found and found.group(1).upper() == target:
-            consider(start)
+        if found:
+            labels.append((ord(found.group(1).upper()) - ord("A"), start))
         elif value and text_matches(text, value):
-            consider(start)
-        elif found:
-            others.append((ord(found.group(1).upper()) - ord("A"), start))
-    if best:
-        return best[1]
-    # Work it out from the other options' letters near the AI's spot, e.g. A) and C) found but B) misread.
-    group = [(index, spot) for index, spot in others
-             if abs(spot[1] - near[1]) <= max_distance and abs(spot[0] - near[0]) <= max_distance * 2]
-    if len(group) >= 2 and len({index for index, _ in group}) >= 2:
-        group.sort()
-        (i0, (x0, y0)), (i1, (x1, y1)) = group[0], group[-1]
-        if i1 != i0:
-            step_x, step_y = (x1 - x0) / (i1 - i0), (y1 - y0) / (i1 - i0)
-            want = ord(target) - ord("A")
-            spot = (x0 + step_x * (want - i0), y0 + step_y * (want - i0))
-            if abs(want - i0) <= 6 and ((spot[0] - near[0]) ** 2 + (spot[1] - near[1]) ** 2) ** 0.5 <= max_distance:
-                return spot
-    return None
+            distance = ((start[0] - near[0]) ** 2 + (start[1] - near[1]) ** 2) ** 0.5
+            if distance <= max_distance and (by_text is None or distance < by_text[0]):
+                by_text = (distance, start)
+
+    groups = [group for group in option_groups(labels) if group_distance(group, near) <= max_distance]
+    groups.sort(key=lambda group: group_distance(group, near))
+    for group in groups:
+        spot = spot_in_group(group, target)
+        if spot is not None:
+            return spot
+    return by_text[1] if by_text else None
 
 
 def snap_to_line(lines, x, y, tolerance):
