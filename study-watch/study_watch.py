@@ -1250,6 +1250,7 @@ def point_at_answer(image, result, label_style=None):
 # ---------------------------------------------------------------- Caps Lock light (counting)
 
 CAPS_BLINK_S = 0.4          # on and off time of each blink
+CAPS_AFTER_THINKING_S = 2.0  # dark pause between the last thinking flash and the answer count
 CAPS_BETWEEN_S = 3.0        # pause between answers when one screen has several questions
 caps_lock = threading.Lock()
 
@@ -1538,7 +1539,8 @@ class StudyWatch:
     def set_status(self, state):
         if state == "working" and self.config.get("caps_thinking", True) and self.thinking is None:
             self.thinking = threading.Event()
-            threading.Thread(target=caps_thinking, args=(self.thinking,), daemon=True).start()
+            self.thinking_thread = threading.Thread(target=caps_thinking, args=(self.thinking,), daemon=True)
+            self.thinking_thread.start()
         elif state != "working":
             self.stop_thinking()
         self.status_generation = getattr(self, "status_generation", 0) + 1
@@ -1556,9 +1558,14 @@ class StudyWatch:
         self.status_callback(state)
 
     def stop_thinking(self):
+        """Ends the thinking flash and waits until any flash in progress has finished, so the answer count
+        on Caps Lock that follows never mixes with it."""
         if self.thinking is not None:
             self.thinking.set()
             self.thinking = None
+            thread = getattr(self, "thinking_thread", None)
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=2)
 
     def run(self, region=False):
         """Hotkey handler: captures, solves and delivers on a background thread."""
@@ -1614,7 +1621,10 @@ class StudyWatch:
             else:
                 self.watch.lights("none")
             if self.config.get("caps_lights"):
-                threading.Thread(target=caps_count, args=(lights_letters(result),), daemon=True).start()
+                def count(letters=lights_letters(result)):
+                    time.sleep(CAPS_AFTER_THINKING_S)  # a clear dark gap after the thinking flashes
+                    caps_count(letters)
+                threading.Thread(target=count, daemon=True).start()
             if self.config.get("point_answer") and not region:
                 threading.Thread(target=point_at_answer, args=(image, result, self.config.get("label_style", "light")),
                                  daemon=True).start()
