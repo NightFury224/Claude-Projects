@@ -227,3 +227,18 @@ assert _names[0] == "gemini-4-hydrogen", _names        # newest stable, not the 
 assert "antigravity-preview-09-2026" not in _names     # not a gemini model at all
 assert "gemini-embedding-001" not in _names            # can't read images
 print("gemini picker ok")
+
+# Whichever AI is chosen, every other one that is set up is tried before the question is lost.
+_cfg = {"ai": "claude-code", "gemini_key": "g", "openrouter_key": "o"}
+_claude = s.Claude(_cfg)
+s.find_claude_code = lambda: "claude.exe"
+assert _claude.providers() == ["claude-code", "gemini", "openrouter"]
+_cfg["ai"] = "gemini"
+assert _claude.providers() == ["gemini", "claude-code", "openrouter"]
+_cfg["openrouter_key"] = ""
+assert _claude.providers() == ["gemini", "claude-code"]
+_tried = []
+_claude.ask_one = lambda name, *a: (_tried.append(name), (_ for _ in ()).throw(RuntimeError(name)))[0] \
+    if name != "claude-code" else "answer"
+assert _claude.chat([]) == "answer" and _tried == ["gemini"]
+print("fallback ok")

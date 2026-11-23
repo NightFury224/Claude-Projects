@@ -878,26 +878,39 @@ class Claude:
                     raise RuntimeError("OpenRouter has no free image models right now. Try again later.")
         return self._models
 
-    def chat(self, messages, max_tokens=1500, skip=0):
-        """Asks the chosen AI. With Claude Code, a retry (skip=1) uses Sonnet, and the last retry or a missing /
-        limited Claude Code falls back to the free OpenRouter models when there is a key."""
-        if self.config.get("ai", "claude-code") == "gemini":
-            return gemini_chat(messages, self.config.get("gemini_key", ""),
-                               self.config.get("gemini_model", ""), max_tokens,
-                               self.config.get("gemini_thinking", 0))
-        if self.config.get("ai", "claude-code") == "claude-code":
-            has_key = bool(self.config.get("openrouter_key", "").strip())
-            if skip < 2 or not has_key:
-                try:
-                    model = self.config.get("claude_model", "sonnet")
-                    return claude_code(messages, "sonnet" if skip and model == "haiku" else model,
-                                       self.config.get("claude_token", ""))
-                except RuntimeError:
-                    if not has_key:
-                        raise
-                    log_error(traceback.format_exc())
-            return self._openrouter(messages, max_tokens, 0)
+    def providers(self):
+        """Which AIs to try, the chosen one first, then any other that is actually set up. Whatever fails
+        (refused, signed out, out of free quota), the next one still answers the question."""
+        chosen = self.config.get("ai", "claude-code")
+        order = [chosen] + [name for name in ("claude-code", "gemini", "openrouter") if name != chosen]
+        ready = {"claude-code": lambda: bool(find_claude_code()),
+                 "gemini": lambda: bool(self.config.get("gemini_key", "").strip()),
+                 "openrouter": lambda: bool(self.config.get("openrouter_key", "").strip())}
+        return [name for name in order if ready[name]()]
+
+    def ask_one(self, name, messages, max_tokens, skip):
+        if name == "gemini":
+            return gemini_chat(messages, self.config.get("gemini_key", ""), self.config.get("gemini_model", ""),
+                               max_tokens, self.config.get("gemini_thinking", 0))
+        if name == "claude-code":
+            model = self.config.get("claude_model", "sonnet")
+            return claude_code(messages, "sonnet" if skip and model == "haiku" else model,
+                               self.config.get("claude_token", ""))
         return self._openrouter(messages, max_tokens, skip)
+
+    def chat(self, messages, max_tokens=1500, skip=0):
+        """Asks the chosen AI, and on failure every other AI that is set up, so one being refused or out of
+        free quota doesn't lose the question. The error raised is the chosen AI's, which is the useful one."""
+        first_error = None
+        for index, name in enumerate(self.providers()):
+            try:
+                return self.ask_one(name, messages, max_tokens, skip)
+            except RuntimeError as error:
+                log_error(f"{name} couldn't answer: {error}")
+                if index == 0:
+                    first_error = error
+        raise first_error or RuntimeError("No AI is set up: add a Claude Code sign-in, a Gemini key or an "
+                                          "OpenRouter key in Settings.")
 
     def _openrouter(self, messages, max_tokens=1500, skip=0):
         """skip=1 starts from the second-best model, used to retry when the first gave an unusable reply."""
