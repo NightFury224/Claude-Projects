@@ -151,6 +151,18 @@ _row = [("A) 10", 100, 300, 80, 20, _R(x=100, y=300, width=20, height=20)),
         ("B) 20", 400, 300, 80, 20, _R(x=400, y=300, width=20, height=20)),
         ("C) 30", 700, 300, 80, 20, _R(x=700, y=300, width=20, height=20))]
 assert s.find_option(_row, "C", (300, 290), 500) == (710, 310)
+# Options that are only circles, with no A/B/C/D labels: the letter gives the place in the column.
+_circles = [("Mumbai", 200, 300, 120, 20, _R(x=200, y=300, width=60, height=20)),
+            ("Delhi", 200, 360, 120, 20, _R(x=200, y=360, width=60, height=20)),
+            ("Chennai", 200, 420, 120, 20, _R(x=200, y=420, width=60, height=20)),
+            ("Kolkata", 200, 480, 120, 20, _R(x=200, y=480, width=60, height=20))]
+assert s.find_option(_circles, "C", (210, 400), 300) == (230, 430)
+assert s.find_option(_circles, "A", (210, 400), 300) == (230, 310)
+assert s.find_option(_circles, "Z", (210, 400), 300) is None
+# The AI cycle order and the flashes that go with it.
+assert [flashes for _, _, flashes in s.AI_CYCLE] == ["D", "C", "B", "A"]
+assert s.ai_position({"ai": "claude-code", "claude_model": "opus"}) == 0
+assert s.ai_position({"ai": "openrouter"}) == 3
 s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
 assert s.image_to_screen(110, 410) == (110, 410) and s.image_to_screen(2000, 10) == (-1840, 10)
 print("pointer ok")
@@ -173,7 +185,8 @@ assert s.find_option(_boxes, "B", (120, 365), 200, value="7O") == (106, 370)  # 
 assert s.text_matches("B) The train is faster than the car by 20 km", "The train is faster than the car by 20 km/h")
 assert not s.text_matches("☐ 170", "70")
 assert s.snap_to_line(_boxes, 120, 335, 25) == (120, 310)
-assert s.find_option(_boxes, "B", (120, 365), 200, value="") is None
+# without the option's text, B) is now the 2nd box in the column (used for unlabelled options)
+assert s.find_option(_boxes, "B", (120, 365), 200, value="") == (106, 370)
 print("unlabelled ok")
 
 # A question whose options are cut off, with a number answer, still shows the number.

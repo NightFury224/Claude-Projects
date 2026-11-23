@@ -988,7 +988,35 @@ def find_option(lines, letter, near, max_distance, value=""):
     if choices:
         choices.sort(key=lambda choice: choice[:3])
         return choices[0][3]
-    return by_text[1] if by_text else None
+    if by_text:
+        return by_text[1]
+    return find_unlabelled(lines, target, near, max_distance)
+
+
+def find_unlabelled(lines, target, near, max_distance):
+    """Options that are only clickable circles, with no A/B/C/D: the choices sit stacked in a column near
+    the AI's spot, so the answer's letter gives its place in that column (A = 1st, B = 2nd …)."""
+    want = ord(target) - ord("A")
+    if want < 0 or want > 9:
+        return None
+    column = [(y + h / 2, first) for text, x, y, w, h, first in lines
+              if text.strip() and abs(x - near[0]) <= max_distance and abs(y + h / 2 - near[1]) <= max_distance]
+    if len(column) <= want:
+        return None
+    column.sort()
+    # keep only the evenly spaced run of choices (ignore a heading sitting well above the first option)
+    gaps = sorted(abs(column[i + 1][0] - column[i][0]) for i in range(len(column) - 1))
+    typical = gaps[len(gaps) // 2] if gaps else 0
+    run = [column[0]]
+    for centre, first in column[1:]:
+        if typical and abs(centre - run[-1][0]) > typical * 2.5:
+            run = [(centre, first)] if centre < near[1] else run
+            continue
+        run.append((centre, first))
+    if len(run) <= want:
+        return None
+    centre, first = run[want]
+    return (first.x + first.width / 2, centre)
 
 
 def snap_to_line(lines, x, y, tolerance):
@@ -1979,6 +2007,18 @@ def make_icon(colour):
 ICON_COLOURS = {"idle": "#3b6fd8", "working": "#e0a020", "error": "#d03838", "nobox": "#8a4fd0"}
 MODIFIER_KEYS = {"right ctrl", "left ctrl", "right shift", "left shift", "right alt", "left alt",
                  "alt gr", "right windows", "left windows"}
+AI_CYCLE = [("claude-code", "opus", "D"), ("claude-code", "sonnet", "C"),
+            ("claude-code", "haiku", "B"), ("openrouter", "", "A")]  # D = 4 flashes … A = 1 flash
+
+
+def ai_position(config):
+    """Where the current AI sits in the cycle Opus → Sonnet → Haiku → OpenRouter."""
+    if config.get("ai", "claude-code") != "claude-code":
+        return 3
+    model = config.get("claude_model", "sonnet")
+    return {"opus": 0, "sonnet": 1, "haiku": 2}.get(model, 1)
+
+
 LONG_PRESS_S = 3.0  # hold Right Ctrl this long to swap between Quiz and Coding mode
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -2072,6 +2112,8 @@ def main():
             ok = False
             log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
             add_hotkey(DEFAULTS["hotkey_screen"], lambda: app.run(region=False))
+        if app.config.get("mode") != "coding":  # in coding mode Right Alt types the code out instead
+            add_hotkey("right alt", lambda: threading.Thread(target=cycle_ai, daemon=True).start())
         if app.config.get("mode") == "coding":  # only in coding mode, so these keys work normally otherwise
             add_hotkey("page down", app.code_line.next)      # these two keys are taken over in coding mode
             add_hotkey("page up", app.code_line.previous)
@@ -2157,6 +2199,19 @@ def main():
             app.code_line.close()
         app.new_code_problem()
         register_hotkeys()
+
+    def cycle_ai():
+        """Right Alt: Opus → Sonnet → Haiku → OpenRouter → Opus, then Caps Lock flashes 4, 3, 2 or 1 times."""
+        ai, model, flashes = AI_CYCLE[(ai_position(app.config) + 1) % len(AI_CYCLE)]
+        app.config["ai"] = ai
+        if model:
+            app.config["claude_model"] = model
+        save_config(app.config)
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            pass
+        caps_count([flashes])
 
     def swap_mode():
         """Holding Right Ctrl for 3 seconds swaps Quiz ⇄ Coding. Caps Lock then flashes 2 times for Quiz mode
