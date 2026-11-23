@@ -917,9 +917,10 @@ def option_groups(labels):
         current = groups[-1] if groups else None
         if current:
             last_index, (last_x, last_y) = current[-1]
-            gap = spot[1] - last_y
-            same_question = index > last_index and 0 < gap <= 260 and abs(spot[0] - last_x) <= 120
-            if not same_question:
+            gap_y, gap_x = spot[1] - last_y, spot[0] - last_x
+            stacked = 0 < gap_y <= 260 and abs(gap_x) <= 120          # A, B, C … down the page
+            side_by_side = abs(gap_y) <= 60 and 0 < gap_x <= 700      # A  B  on the same row
+            if not (index > last_index and (stacked or side_by_side)):
                 current = None
         if current is None:
             groups.append([])
@@ -971,12 +972,22 @@ def find_option(lines, letter, near, max_distance, value=""):
             if distance <= max_distance and (by_text is None or distance < by_text[0]):
                 by_text = (distance, start)
 
-    groups = [group for group in option_groups(labels) if group_distance(group, near) <= max_distance]
-    groups.sort(key=lambda group: group_distance(group, near))
-    for group in groups:
+    # Each group is one question's options. Prefer a real block of options over a stray letter elsewhere
+    # on the page, and one that actually has the answer's letter over one it has to be worked out from.
+    choices = []
+    for group in option_groups(labels):
+        distance = group_distance(group, near)
+        if distance > max_distance:
+            continue
         spot = spot_in_group(group, target)
-        if spot is not None:
-            return spot
+        if spot is None:
+            continue
+        exact = any(index == ord(target) - ord("A") for index, _ in group)
+        # a lone letter on its own is most likely a heading or stray text, not a question's options
+        choices.append((0 if len(group) >= 2 else 1, 0 if exact else 1, distance, spot))
+    if choices:
+        choices.sort(key=lambda choice: choice[:3])
+        return choices[0][3]
     return by_text[1] if by_text else None
 
 
@@ -1296,6 +1307,9 @@ def point_at_answer(image, result, label_style=None):
             value = option_value(parts[i]) if i < len(parts) else ""
             spot = find_option(lines, letter, (x, y), max_distance=image.height * 0.2, value=value)
             if spot:
+                if abs(spot[1] - y) > image.height * 0.06:  # moved a long way from the AI's spot: worth knowing
+                    log_error(f"Pointer: option {letter} found at {int(spot[0])},{int(spot[1])} while the AI "
+                              f"said {int(x)},{int(y)}")
                 x, y = spot
             else:  # not found on screen: the AI's rough spot, moved onto the nearest line
                 x, y = snap_to_line(lines, x, y, image.height * 0.02)

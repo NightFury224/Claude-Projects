@@ -140,6 +140,17 @@ _two = [("A) 10", 100, 300, 80, 20, _R(x=100, y=300, width=20, height=20)),
 assert s.find_option(_two, "B", (110, 690), 300) == (110, 760)   # just above the 2nd block → its B)
 assert s.find_option(_two, "B", (110, 310), 300) == (110, 360)   # inside the 1st block → its B)
 assert len(s.option_groups([(i, (100, y)) for i, y in enumerate([300, 350, 400])])) == 1
+# One question only: a stray "B." in a heading far above must not win over the real option block.
+_stray = [("B. Section two", 900, 120, 200, 20, _R(x=900, y=120, width=20, height=20)),
+          ("A) 10", 100, 300, 80, 20, _R(x=100, y=300, width=20, height=20)),
+          ("B) 20", 100, 350, 80, 20, _R(x=100, y=350, width=20, height=20)),
+          ("C) 30", 100, 400, 80, 20, _R(x=100, y=400, width=20, height=20))]
+assert s.find_option(_stray, "B", (150, 200), 400) == (110, 360)
+# Options side by side on one row.
+_row = [("A) 10", 100, 300, 80, 20, _R(x=100, y=300, width=20, height=20)),
+        ("B) 20", 400, 300, 80, 20, _R(x=400, y=300, width=20, height=20)),
+        ("C) 30", 700, 300, 80, 20, _R(x=700, y=300, width=20, height=20))]
+assert s.find_option(_row, "C", (300, 290), 500) == (710, 310)
 s.LAST_LAYOUT = [(0, 0, 1920, 1080, 0, 0), (1920, 0, 1920, 1080, -1920, 0)]
 assert s.image_to_screen(110, 410) == (110, 410) and s.image_to_screen(2000, 10) == (-1840, 10)
 print("pointer ok")
