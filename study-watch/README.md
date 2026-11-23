@@ -165,6 +165,10 @@ OpenRouter key or credit is needed. One-time setup on Windows:
    (or install Node.js from nodejs.org and run `npm install -g @anthropic-ai/claude-code`).
 2. In a new PowerShell window run `claude`, sign in with your Claude account, then type `/exit`.
 3. Restart Study Watch.
+4. So it never signs itself out mid-class: in PowerShell run `claude setup-token` (with the full path
+   `& "$env:USERPROFILE\.local\bin\claude.exe" setup-token` if `claude` isn't found), sign in, and copy the
+   long token it prints. Tray → Settings, paste it as `"claude_token": "…"`, save, then tray → Reload settings.
+   This token lasts about a year. Treat it like a password.
 
 Tray → **AI**: *Claude Code – Sonnet* (smarter, default), *Claude Code – Haiku* (faster), *Claude Code – Opus* (best at figure questions, slowest, uses your limit fastest), or *OpenRouter (free models)*.
 Each question takes about 10–20 seconds and uses your Claude plan's limits. If Claude Code is missing,

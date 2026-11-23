@@ -36,6 +36,7 @@ LOG_DIR = Path.home() / "Documents" / APP
 DEFAULTS = {
     "openrouter_key": "",
     "ai": "claude-code",         # "claude-code" (Claude Code on this laptop, your Claude account) or "openrouter"
+    "claude_token": "",          # long-lived Claude Code sign-in from "claude setup-token" (stays signed in ~1 year)
     "claude_model": "sonnet",    # Claude Code model: "sonnet" (smart), "haiku" (faster) or "opus" (best, slowest)
     "model": "auto",
     "hotkey_screen": "right ctrl",
@@ -658,7 +659,7 @@ def find_claude_code():
     return None
 
 
-def claude_code(messages, model="sonnet"):
+def claude_code(messages, model="sonnet", token=""):
     """Solves with Claude Code on this laptop (signed in with your Claude account, no API key).
     [messages] are in the usual chat format; screenshots are saved as files for Claude Code to look at."""
     import subprocess
@@ -689,6 +690,7 @@ def claude_code(messages, model="sonnet"):
         result = subprocess.run(
             [program, "-p", "--model", model, "--allowedTools", "Read", "--max-turns", str(images + 3),
              "--output-format", "text"],
+            env={**os.environ, **({"CLAUDE_CODE_OAUTH_TOKEN": token.strip()} if token.strip() else {})},
             input="\n".join(parts), capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=work, timeout=180, creationflags=0x08000000 if sys.platform == "win32" else 0)  # no console window
         reply = (result.stdout or "").strip()
@@ -697,7 +699,8 @@ def claude_code(messages, model="sonnet"):
             if "limit" in detail.lower():
                 raise RuntimeError(f"Claude usage limit reached: {detail}")
             if "login" in detail.lower() or "auth" in detail.lower():
-                raise RuntimeError("Claude Code isn't signed in: open a terminal, run claude, and sign in once.")
+                raise RuntimeError("Claude Code isn't signed in. Run: claude setup-token, then paste the token "
+                                   "into Settings as \"claude_token\" so it stays signed in.")
             raise RuntimeError(f"Claude Code failed: {detail}")
         return reply
     except subprocess.TimeoutExpired:
@@ -777,7 +780,8 @@ class Claude:
             if skip < 2 or not has_key:
                 try:
                     model = self.config.get("claude_model", "sonnet")
-                    return claude_code(messages, "sonnet" if skip and model == "haiku" else model)
+                    return claude_code(messages, "sonnet" if skip and model == "haiku" else model,
+                                       self.config.get("claude_token", ""))
                 except RuntimeError:
                     if not has_key:
                         raise
