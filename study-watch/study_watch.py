@@ -191,10 +191,14 @@ REPLY_FORMAT = """Reply with JSON only:
  "new_set": false, "options": "<letters>", "numbers": "<numbers>", "point": "<x,y>"}
 "options": the letter of the ONE CORRECT option for each question answered, in the same order as "answer",
 comma-separated, with "-" for a question that has no lettered options: one letter per question, never a list
-of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when options are labelled
-A, B, C… (or 1, 2, 3… — then give A for 1, B for 2), even if "answer" only shows the value. Options with no
-labels at all (just tick boxes or buttons) count as A, B, C… in reading order. Empty if no
-question has options.
+of all the choices. One question whose answer is C → "C". Two questions → e.g. "C,B". Always fill it when the
+options are labelled, even if "answer" only shows the value.
+The letter is the option's POSITION in the list — 1st = A, 2nd = B, 3rd = C, 4th = D — and it must match the
+label printed beside the chosen option. Never work it out from the answer's VALUE: with options
+"A) 2  B) 4  C) 3  D) 1" the answer 4 is the 2nd option, so "B" (not "D" for the digit 4). The same applies
+when the options are numbered 1., 2., 3. instead of lettered: the 2nd option is "B" whatever its value.
+Options with no labels at all (just tick boxes or buttons) count as A, B, C… in reading order.
+Also put that letter in "answer" ("B) 4"), so the two always agree. Empty if no question has options.
 "point": for EACH question, in the same order as "answer", separated by ";", a spot in the LAST image (the
 current screen) as fractions of the image width and height: for a question with options, the centre of the
 correct option (its letter label, or its text if the options have no labels); for a question answered by
@@ -478,9 +482,18 @@ def lights_letters(result):
     when it has exactly one letter per answer, so a list of every choice ("A,B,C,D" for one question) is
     never shown; otherwise the letters are read from the answer text."""
     options = result.get("options") or []
+    shown = option_letters(result["answer"])
     if options and len(options) == len(answer_parts(result["answer"])):
-        return options
-    return option_letters(result["answer"])
+        letters = list(options)
+        for i, letter in enumerate(shown):
+            # The answer text carries the letter the model actually chose ("B) 4"). When the "options"
+            # field disagrees, it has usually read a numeric option VALUE as a label (options 2/4/3/1,
+            # answer 4 → "D"). The letter printed in the answer wins.
+            if letter != "-" and letters[i] != letter:
+                log_error(f'"options" said {letters[i]} but the answer says {letter}: using {letter}')
+                letters[i] = letter
+        return letters
+    return shown
 
 
 def option_letters(answer):

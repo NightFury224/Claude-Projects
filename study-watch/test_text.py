@@ -341,3 +341,14 @@ assert _alt(_ev("left ctrl", "down", 29)) is True     # a real Left Ctrl still w
 _bad = s.lone_key_handler("right ctrl", lambda: None, run=lambda target: target())
 assert _bad(_E()) is True
 print("lone keys ok")
+
+# Options A) 2  B) 4  C) 3  D) 1 and the answer 4: the letter must be B (2nd option), never D (the digit 4).
+_wrong = {"answer": "B) 4", "options": ["D"], "numbers": []}
+assert s.lights_letters(_wrong) == ["B"]            # the letter printed in the answer wins
+assert s.lights_message(_wrong) == "B"              # so the light box blinks twice, not four times
+# When the two agree nothing changes, and a question with no letter is untouched.
+assert s.lights_letters({"answer": "Q1: B) 4 · Q2: 12", "options": ["B", "-"]}) == ["B", "-"]
+assert s.lights_letters({"answer": "Q1: 12 · Q2: C) 9", "options": ["-", "C"]}) == ["-", "C"]
+# A bare value with no letter still trusts the model's field.
+assert s.lights_letters({"answer": "4", "options": ["B"]}) == ["B"]
+print("option letter ok")
