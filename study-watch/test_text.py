@@ -309,3 +309,35 @@ for _auto in (True, False):           # an auto-indenting editor and a plain one
 assert _type_out(["print(1)"], True)[0] == "print(1)"
 assert _type_out(["    x = 1", "    y = 2"], True)[0] == "    x = 1\n    y = 2"
 print("typing ok")
+
+# ---- Right Ctrl / Right Alt belong to the app: swallowed in every mode -----------------------------
+from types import SimpleNamespace as _E
+
+
+def _ev(name, kind, scan=0):
+    return _E(name=name, event_type=kind, scan_code=scan)
+
+
+_ran = []
+_h = s.lone_key_handler("right ctrl", lambda: _ran.append("tap"), lambda: _ran.append("hold"),
+                        run=lambda target: target())
+assert _h(_ev("right ctrl", "down")) is False      # swallowed: the app never sees it
+assert _h(_ev("right ctrl", "up")) is False
+assert _ran == ["tap"]
+assert _h(_ev("a", "down")) is True                # every other key passes through untouched
+assert _h(_ev("left ctrl", "down", 29)) is True
+# Held long enough, it swaps mode instead of solving.
+_ran.clear()
+_long, s.LONG_PRESS_S = s.LONG_PRESS_S, 0.0      # any hold counts as a long press for the test
+_h(_ev("right ctrl", "down"))
+assert _h(_ev("right ctrl", "up")) is False and _ran == ["hold"]
+s.LONG_PRESS_S = _long
+# Right Alt also swallows the phantom Left Ctrl that AltGr sends with it.
+_alt = s.lone_key_handler("right alt", lambda: _ran.append("alt"), run=lambda target: target())
+assert _alt(_ev("alt gr", "down")) is False and _alt(_ev("alt gr", "up")) is False
+assert _alt(_ev("left ctrl", "down", 541)) is False   # the phantom one
+assert _alt(_ev("left ctrl", "down", 29)) is True     # a real Left Ctrl still works
+# A bug inside the handler must never block the keyboard.
+_bad = s.lone_key_handler("right ctrl", lambda: None, run=lambda target: target())
+assert _bad(_E()) is True
+print("lone keys ok")

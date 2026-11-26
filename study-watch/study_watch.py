@@ -2174,6 +2174,43 @@ def ai_position(config):
 
 
 LONG_PRESS_S = 3.0  # hold Right Ctrl this long to swap between Quiz and Coding mode
+
+
+def lone_key_handler(combo, action, long_action=None, run=None):
+    """The keyboard hook for a key that belongs to Study Watch alone (Right Ctrl, Right Alt).
+
+    A tap runs [action]; holding it LONG_PRESS_S or more runs [long_action]. The key is swallowed in
+    every mode, so the app you are in never sees it: Right Ctrl is no longer a Ctrl key, and Right Alt
+    no longer types AltGr characters.
+
+    Returns the callback for keyboard.hook(..., suppress=True): False swallows the event, True lets it
+    through. The hook is global, so a return of None — or an exception — would kill the whole keyboard.
+    Every path returns a bool, and anything unexpected fails open (the key still works, the hotkey may not).
+    """
+    # On an India/English layout Right Alt IS AltGr: Windows calls it "alt gr" and sends a phantom Left
+    # Ctrl (scan code 541) with it, which has to be swallowed too or apps see a stray Ctrl.
+    names = {combo, "alt gr"} if combo == "right alt" else {combo}
+    state = {"down": False, "since": 0.0}
+    start = run or (lambda target: threading.Thread(target=target, daemon=True).start())
+
+    def on_key(event):
+        try:
+            if event.name in names:
+                if event.event_type == "down":
+                    if not state["down"]:
+                        state.update(down=True, since=time.time())
+                elif state["down"]:
+                    state["down"] = False
+                    held = time.time() - state["since"]
+                    start(long_action if long_action and held >= LONG_PRESS_S else action)
+                return False
+            # the phantom Ctrl that comes with AltGr goes too; every other key passes through
+            return not (combo == "right alt" and getattr(event, "scan_code", 0) == 541)
+        except Exception:  # noqa: BLE001 - never block the keyboard because of a bug in here
+            log_error(traceback.format_exc())
+            return True
+
+    return on_key
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -2230,30 +2267,13 @@ def main():
         """[long_action] (lone modifiers only): runs instead of [action] when the key is held for 1 second."""
         combo = combo.strip().lower()
         if "+" not in combo and combo in MODIFIER_KEYS:
-            # A lone modifier (e.g. right ctrl) fires when tapped on its own, and isn't swallowed,
-            # so shortcuts like right ctrl+c keep working.
-            # On an India/English layout Right Alt is AltGr: Windows calls it "alt gr" and sends a phantom
-            # Left Ctrl (scan code 541) with it, which must not count as "another key was pressed".
-            names = {combo, "alt gr"} if combo == "right alt" else {combo}
-            companion = (lambda event: combo == "right alt" and event.scan_code == 541)
-            state = {"down": False, "other": False, "since": 0.0}
-
-            def on_key(event):
-                if event.name in names:
-                    if event.event_type == "down" and not state["down"]:
-                        state.update(down=True, other=False, since=time.time())
-                    elif event.event_type == "up" and state["down"]:
-                        state["down"] = False
-                        if not state["other"]:
-                            held = time.time() - state["since"]
-                            if long_action and held >= LONG_PRESS_S:
-                                threading.Thread(target=long_action, daemon=True).start()
-                            else:
-                                action()
-                elif event.event_type == "down" and not companion(event):
-                    state["other"] = True
-
-            hotkeys.append(("hook", keyboard.hook(on_key)))
+            # A lone modifier (e.g. right ctrl) fires when tapped on its own, and the app you are in never
+            # sees it at all: the key belongs to Study Watch in every mode. So Right Ctrl no longer acts as
+            # a Ctrl key (use the left one for Ctrl+C) and Right Alt no longer types AltGr characters.
+            # On an India/English layout Right Alt IS AltGr: Windows calls it "alt gr" and sends a phantom
+            # Left Ctrl (scan code 541) with it, which has to be swallowed too or apps see a stray Ctrl.
+            hotkeys.append(("hook", keyboard.hook(lone_key_handler(combo, action, long_action),
+                                                  suppress=True)))
         else:
             # suppress=True keeps the shortcut from also reaching the app you're in.
             hotkeys.append(("hotkey", keyboard.add_hotkey(combo, action, suppress=True)))

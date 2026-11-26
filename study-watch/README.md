@@ -74,7 +74,7 @@ Set `hotkey_screen` in Settings, then tray → **Reload settings**. Good choices
 
 | Shortcut | Notes |
 |---|---|
-| `right ctrl` | **Default.** Tap it on its own. Right Ctrl+C and other combos still work normally |
+| `right ctrl` | **Default.** Tap it on its own. The key is reserved for Study Watch: the app you are in never receives it, so Right Ctrl+C no longer works — use Left Ctrl |
 | `ctrl+shift+space` | Swallowed, so it won't trigger VS Code hints or Word's non-breaking space |
 | `ctrl+alt+x` | Easy one-hand reach (avoid `ctrl+alt+` letters on keyboards that use AltGr) |
 | `ctrl+shift+f9` … `f12` | Rarely used by apps. On many laptops the F-keys need **Fn**, unless Fn-lock is on |
@@ -96,7 +96,7 @@ Tray icon → **Edit AI rules** opens `%APPDATA%\StudyWatch\rules.txt` in Notepa
 ## Settings (`config.json`)
 | Setting | Default | |
 |---|---|---|
-| `hotkey_screen` | `right ctrl` | Whole-screen hotkey (a lone modifier fires when tapped by itself) |
+| `hotkey_screen` | `right ctrl` | Whole-screen hotkey (a lone modifier fires when tapped by itself, and is swallowed so the app never sees it) |
 | `hotkey_region` | `""` (off) | Optional drag-a-box hotkey |
 | `capture` | `gdi` | `gdi` or `wgc` (see above) |
 | `model` | `auto` | `auto` uses the best **free** image models, falling back to the next if one is busy. `claude` uses the newest Claude Sonnet (needs credit, most accurate). Or give any OpenRouter model id. |
