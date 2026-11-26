@@ -2290,7 +2290,9 @@ def main():
             ok = False
             log_error(f"Invalid hotkey {app.config['hotkey_screen']!r}, using right ctrl")
             add_hotkey(DEFAULTS["hotkey_screen"], lambda: app.run(region=False))
-        if app.config.get("mode") != "coding":  # in coding mode Right Alt types the code out instead
+        # In coding mode the typing hook owns Right Alt (it types the code out) — unless typing is off,
+        # and then this takes it back, so the key never reaches the app you are in whatever the mode.
+        if app.config.get("mode") != "coding" or not app.config.get("type_code", True):
             try:
                 add_hotkey(app.config.get("hotkey_ai") or "right alt",
                            lambda: threading.Thread(target=cycle_ai, daemon=True).start())
