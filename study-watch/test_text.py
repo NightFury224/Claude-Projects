@@ -352,3 +352,13 @@ assert s.lights_letters({"answer": "Q1: 12 · Q2: C) 9", "options": ["-", "C"]})
 # A bare value with no letter still trusts the model's field.
 assert s.lights_letters({"answer": "4", "options": ["B"]}) == ["B"]
 print("option letter ok")
+
+# More than four options: letters up to J are read in every answer shape.
+assert s.option_letters("I. 12") == ["I"] and s.option_letters("12 (J)") == ["J"]
+assert s.option_letters("option I") == ["I"] and s.option_letters("J) 5") == ["J"]
+assert s.option_letters("Q1: E) 2 · Q2: H) 3") == ["E", "H"]
+# Loose maths must still not look like an option letter.
+assert s.option_letters("x = 5") == ["-"] and s.option_letters("n 27") == ["-"]
+assert s.option_letters("T 27") == ["-"]          # beyond J, so still safe
+assert s.lights_message({"answer": "F) 12", "options": ["F"], "numbers": []}) == "F"
+print("many options ok")

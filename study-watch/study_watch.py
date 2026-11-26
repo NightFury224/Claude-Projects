@@ -505,9 +505,11 @@ def option_letters(answer):
         part = re.sub(r"^(?:option|ans(?:wer)?)\s*[:.-]?\s*", "", part, flags=re.I)
         found = (re.match(r"\(?([A-Za-z])\)", part)                      # "B) 27", "(B) 27"
                  or re.fullmatch(r"([A-Za-z])\.?", part)                 # "B"
-                 or re.match(r"([A-H])(?:[.:]\s|\s+[-–—=]\s*|\s+(?=[\d(√π⅓¼½⅔¾-]))", part)  # "B. 27", "B - 27", "B 27"
-                 or re.search(r"\(([A-H])\)\s*$", part)                 # "27 (B)"
-                 or re.search(r"\boption\s+([A-H])\b", part, re.I))    # "… option B"
+                 # A–J (ten options) rather than the whole alphabet: these three shapes match loose text,
+                 # so allowing every letter would read "x = 5" or "n 27" as an option letter.
+                 or re.match(r"([A-J])(?:[.:]\s|\s+[-–—=]\s*|\s+(?=[\d(√π⅓¼½⅔¾-]))", part)  # "B. 27", "B - 27", "B 27"
+                 or re.search(r"\(([A-J])\)\s*$", part)                 # "27 (B)"
+                 or re.search(r"\boption\s+([A-J])\b", part, re.I))    # "… option B"
         letters.append(found.group(1).upper() if found else "-")
     return letters
 
